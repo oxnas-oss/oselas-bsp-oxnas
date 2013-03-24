@@ -1,4 +1,4 @@
-From d111c31164419d7de2d7e04ea1f24cd5d7c1a1d7 Mon Sep 17 00:00:00 2001
+From 193c92f063bb8eeb31360309ce6d917cf783aa00 Mon Sep 17 00:00:00 2001
 From: Stephan Linz <linz@li-pro.net>
 Date: Sun, 24 Mar 2013 16:16:19 +0100
 Subject: [PATCH] OE: ubifs: ubifs-v2.6.24.patch

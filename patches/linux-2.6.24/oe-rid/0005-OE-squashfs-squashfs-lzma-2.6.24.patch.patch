@@ -1,4 +1,4 @@
-From 87ae3e44e887c03795d06c7a0cf16d9190c4c849 Mon Sep 17 00:00:00 2001
+From 8f036960cf687fb090df307fa478ff1c8c14ed99 Mon Sep 17 00:00:00 2001
 From: Stephan Linz <linz@li-pro.net>
 Date: Sun, 24 Mar 2013 16:15:44 +0100
 Subject: [PATCH] OE: squashfs: squashfs-lzma-2.6.24.patch

@@ -1,4 +1,4 @@
-From 1a44d2300402c5414d863bd141b872e0aee0a636 Mon Sep 17 00:00:00 2001
+From 332c1c9efe49011e07b0784ec29d9ab3aac9fc93 Mon Sep 17 00:00:00 2001
 From: Stephan Linz <linz@li-pro.net>
 Date: Sun, 24 Mar 2013 16:16:42 +0100
 Subject: [PATCH] OE: ubifs: ubifs-v2.6.24-silent-get-sb.patch

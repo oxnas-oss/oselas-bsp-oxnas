@@ -3,6 +3,9 @@ patch-2.6.24.1.bz2
 patch-2.6.24.1-2.bz2
 patch-2.6.24.2-3.bz2
 patch-2.6.24.3-4.bz2
+patch-2.6.24.4-5.bz2
+patch-2.6.24.5-6.bz2
+patch-2.6.24.6-7.bz2
 oe-rid/0001-OE-oxnas-oxnas-rid-2.6.24.4.diff.patch
 oe-rid/0002-OE-oxnas-oxnas-pci-config-delay.patch.patch
 oe-rid/0003-OE-oxnas-oxnas-pci-max-size.patch.patch

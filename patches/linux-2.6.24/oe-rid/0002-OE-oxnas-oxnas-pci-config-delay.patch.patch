@@ -1,4 +1,4 @@
-From b9773446910468229c7cb5fd096b1695d8865030 Mon Sep 17 00:00:00 2001
+From 0a1b428a92fa00aa3dc4161fbf6c732c6b164d4c Mon Sep 17 00:00:00 2001
 From: Stephan Linz <linz@li-pro.net>
 Date: Sun, 24 Mar 2013 16:02:03 +0100
 Subject: [PATCH] OE: oxnas: oxnas-pci-config-delay.patch

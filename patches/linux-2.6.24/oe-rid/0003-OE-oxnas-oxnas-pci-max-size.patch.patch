@@ -1,4 +1,4 @@
-From 44166a8ada1e666d9d23ca0b98009364b4d69923 Mon Sep 17 00:00:00 2001
+From 17547d81fd699635b2c3f1a03ecacf1d4e5f6913 Mon Sep 17 00:00:00 2001
 From: Stephan Linz <linz@li-pro.net>
 Date: Sun, 24 Mar 2013 16:03:54 +0100
 Subject: [PATCH] OE: oxnas: oxnas-pci-max-size.patch

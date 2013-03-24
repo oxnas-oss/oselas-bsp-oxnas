@@ -1,5 +1,6 @@
 2013-03-24	Stephan Linz <linz@li-pro.net>
 
+	* platform: rebase OE patches to linux-2.6.24.7
 	* platform: add OE patches rid from linux-2.6.24.4
 	* common: initial version oselas-bsp-oxnas
 
