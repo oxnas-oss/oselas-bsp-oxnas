@@ -1,0 +1,4 @@
+ptxdist select configs/ptxconfig
+ptxdist platform configs/Iomega-HMNHD/platformconfig
+ptxdist images
+

@@ -1,0 +1,25 @@
+From bfd1b827a4e2e07a98c605f43be45568c58681f6 Mon Sep 17 00:00:00 2001
+From: Peter Lemenkov <lemenkov@gmail.com>
+Date: Thu, 25 Jun 2009 09:56:17 -0400
+Subject: [PATCH] backported from trunk
+
+---
+ Makefile |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 7ce0947..fd61a56 100644
+--- a/Makefile
++++ b/Makefile
+@@ -50,7 +50,7 @@ export	ARCH CPU BOARD VENDOR SOC
+ include $(TOPDIR)/config.mk
+ 
+ ifndef CROSS_COMPILE
+-ifeq ($(HOSTARCH),ppc)
++ifeq ($(HOSTARCH),$(ARCH))
+ CROSS_COMPILE =
+ else
+ ifeq ($(ARCH),ppc)
+-- 
+1.7.1
+

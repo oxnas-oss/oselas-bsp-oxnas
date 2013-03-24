@@ -1,0 +1,7 @@
+oe/oxnas/oxnas.diff
+oe/oxnas/oxnas-pci-config-delay.patch
+oe/oxnas/oxnas-pci-max-size.patch
+oe/oxnas/oxnas-uart.patch
+oe/squashfs-lzma-2.6.24.patch
+oe/ubifs-v2.6.24.patch
+oe/ubifs-v2.6.24-silent-get-sb.patch

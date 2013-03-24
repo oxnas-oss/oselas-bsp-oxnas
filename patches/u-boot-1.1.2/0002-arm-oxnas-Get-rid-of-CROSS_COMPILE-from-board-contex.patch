@@ -1,0 +1,23 @@
+From 6e3471b75fe616ebc57149accae45f861c338426 Mon Sep 17 00:00:00 2001
+From: Stephan Linz <linz@li-pro.net>
+Date: Fri, 15 Feb 2013 20:08:31 +0100
+Subject: [PATCH] arm-oxnas: Get rid of CROSS_COMPILE from board context.
+
+Signed-off-by: Stephan Linz <linz@li-pro.net>
+---
+ board/oxnas/config.mk |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/board/oxnas/config.mk b/board/oxnas/config.mk
+index 7f84dc2..b404b94 100644
+--- a/board/oxnas/config.mk
++++ b/board/oxnas/config.mk
+@@ -1,5 +1,4 @@
+ TEXT_BASE = 0x48d00000
+-CROSS_COMPILE = arm-linux-
+ 
+ PLL400 ?= 733333333
+ RPSCLK ?=  25000000
+-- 
+1.7.1
+
