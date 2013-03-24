@@ -116,8 +116,8 @@ PTXCONF_KERNEL_IMAGE="uImage"
 #
 # patching & configuration      
 #
-PTXCONF_KERNEL_SERIES="series-oe"
-PTXCONF_KERNEL_CONFIG="kernelconfig-oe-${PTXCONF_KERNEL_VERSION}"
+PTXCONF_KERNEL_SERIES="series"
+PTXCONF_KERNEL_CONFIG="kernelconfig-${PTXCONF_KERNEL_VERSION}"
 
 #
 # Development features

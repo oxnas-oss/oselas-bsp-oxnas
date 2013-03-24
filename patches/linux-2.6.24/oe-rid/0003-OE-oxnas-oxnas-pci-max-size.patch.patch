@@ -1,0 +1,45 @@
+From 44166a8ada1e666d9d23ca0b98009364b4d69923 Mon Sep 17 00:00:00 2001
+From: Stephan Linz <linz@li-pro.net>
+Date: Sun, 24 Mar 2013 16:03:54 +0100
+Subject: [PATCH] OE: oxnas: oxnas-pci-max-size.patch
+
+This patch came from OpenEmbedded and needs to be patched
+after oxnas-pci-config-delay.diff.
+
+The original patch wass applied by:
+
+    git apply --whitespace=fix oxnas-pci-max-size.patch
+    git add .
+
+http://git.openembedded.org/openembedded/tree/recipes/linux/linux-2.6.24/oxnas/oxnas-pci-max-size.patch?id=49b1ca2b12b330551a8b6e724dff2c00666c05c4
+
+Signed-off-by: Stephan Linz <linz@li-pro.net>
+---
+ arch/arm/mach-oxnas/pci.c |    8 +++++---
+ 1 files changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm/mach-oxnas/pci.c b/arch/arm/mach-oxnas/pci.c
+index 901c699..6692856 100644
+--- a/arch/arm/mach-oxnas/pci.c
++++ b/arch/arm/mach-oxnas/pci.c
+@@ -78,12 +78,14 @@ static unsigned long pci_trhfa_msec = 0;
+ static unsigned long pci_trhfa_timeout = 0;
+ #endif // CONFIG_OXNAS_PCI_RESET
+ 
+-#define PCI_BUS_NONMEM_START			0x00000000
+-#define PCI_BUS_NONMEM_SIZE	    		0x00080000
++// processor allows up to 8MB PCI address ranges maximum by design
++// we split this up to 4MB prefetchable and 4MB non-prefetchable
+ 
++#define PCI_BUS_NONMEM_START			0x00000000
++#define PCI_BUS_NONMEM_SIZE	    		0x00400000
+ 
+ #define PCI_BUS_PREMEM_START			PCI_BUS_NONMEM_START + PCI_BUS_NONMEM_SIZE
+-#define PCI_BUS_PREMEM_SIZE	    		0x00080000
++#define PCI_BUS_PREMEM_SIZE	    		0x00400000
+ 
+ #define SYNOPSYS_PCI_MEMORY_BASE_ADDRESS        PCI_BASE_ADDRESS_0
+ #define SYNOPSYS_PCI_DUAL_CYCLE_BASE_ADDRESS    PCI_BASE_ADDRESS_2
+-- 
+1.7.1
+

@@ -1,0 +1,212 @@
+From 7300a5baf61a7bab5fb0bbd371cc627442119fc3 Mon Sep 17 00:00:00 2001
+From: Stephan Linz <linz@li-pro.net>
+Date: Sun, 24 Mar 2013 16:05:08 +0100
+Subject: [PATCH] OE: oxnas: oxnas-uart.patch
+
+This patch came from OpenEmbedded and needs to be patched
+after oxnas-rid-2.6.24.4.diff.
+
+The original patch wass applied by:
+
+    git apply --whitespace=fix oxnas-uart.patch
+    git add .
+
+http://git.openembedded.org/openembedded/tree/recipes/linux/linux-2.6.24/oxnas/oxnas-uart.patch?id=49b1ca2b12b330551a8b6e724dff2c00666c05c4
+
+Signed-off-by: Stephan Linz <linz@li-pro.net>
+---
+ arch/arm/configs/oxnas_810_eabi_dse_defconfig     |    2 +
+ arch/arm/configs/oxnas_810_eabi_upgrade_defconfig |    2 +
+ arch/arm/configs/oxnas_810_eabi_wd_eval_defconfig |    2 +
+ arch/arm/configs/oxnas_810_eabi_wd_prod_defconfig |    2 +
+ arch/arm/mach-oxnas/Kconfig                       |   56 +++++++++++++++++++++
+ include/asm-arm/arch-oxnas/debug-macro.S          |    6 +-
+ include/asm-arm/arch-oxnas/uncompress.h           |    8 ++--
+ 7 files changed, 71 insertions(+), 7 deletions(-)
+
+diff --git a/arch/arm/configs/oxnas_810_eabi_dse_defconfig b/arch/arm/configs/oxnas_810_eabi_dse_defconfig
+index c844648..e64295a 100644
+--- a/arch/arm/configs/oxnas_810_eabi_dse_defconfig
++++ b/arch/arm/configs/oxnas_810_eabi_dse_defconfig
+@@ -160,6 +160,8 @@ CONFIG_OXNAS_VERSION_0X810=y
+ # CONFIG_OXNAS_VERSION_0X850 is not set
+ # CONFIG_ARCH_OXNAS_UART1 is not set
+ CONFIG_ARCH_OXNAS_UART2=y
++CONFIG_ARCH_OXNAS_UART2_DEBUG=y
++CONFIG_ARCH_OXNAS_UART2_BOOTPROGRESS=y
+ # CONFIG_ARCH_OXNAS_UART2_MODEM is not set
+ # CONFIG_ARCH_OXNAS_UART3 is not set
+ # CONFIG_ARCH_OXNAS_PCI_REQGNT_0 is not set
+diff --git a/arch/arm/configs/oxnas_810_eabi_upgrade_defconfig b/arch/arm/configs/oxnas_810_eabi_upgrade_defconfig
+index e5f34eb..f33398a 100644
+--- a/arch/arm/configs/oxnas_810_eabi_upgrade_defconfig
++++ b/arch/arm/configs/oxnas_810_eabi_upgrade_defconfig
+@@ -152,6 +152,8 @@ CONFIG_OXNAS_VERSION_0X810=y
+ # CONFIG_OXNAS_VERSION_0X850 is not set
+ # CONFIG_ARCH_OXNAS_UART1 is not set
+ CONFIG_ARCH_OXNAS_UART2=y
++CONFIG_ARCH_OXNAS_UART2_DEBUG=y
++CONFIG_ARCH_OXNAS_UART2_BOOTPROGRESS=y
+ # CONFIG_ARCH_OXNAS_UART2_MODEM is not set
+ # CONFIG_ARCH_OXNAS_UART3 is not set
+ # CONFIG_ARCH_OXNAS_PCI_REQGNT_0 is not set
+diff --git a/arch/arm/configs/oxnas_810_eabi_wd_eval_defconfig b/arch/arm/configs/oxnas_810_eabi_wd_eval_defconfig
+index 030f242..36756e9 100644
+--- a/arch/arm/configs/oxnas_810_eabi_wd_eval_defconfig
++++ b/arch/arm/configs/oxnas_810_eabi_wd_eval_defconfig
+@@ -160,6 +160,8 @@ CONFIG_OXNAS_VERSION_0X810=y
+ # CONFIG_OXNAS_VERSION_0X850 is not set
+ # CONFIG_ARCH_OXNAS_UART1 is not set
+ CONFIG_ARCH_OXNAS_UART2=y
++CONFIG_ARCH_OXNAS_UART2_DEBUG=y
++CONFIG_ARCH_OXNAS_UART2_BOOTPROGRESS=y
+ # CONFIG_ARCH_OXNAS_UART2_MODEM is not set
+ # CONFIG_ARCH_OXNAS_UART3 is not set
+ # CONFIG_ARCH_OXNAS_UART4 is not set
+diff --git a/arch/arm/configs/oxnas_810_eabi_wd_prod_defconfig b/arch/arm/configs/oxnas_810_eabi_wd_prod_defconfig
+index e98d31d..07a8dd0 100644
+--- a/arch/arm/configs/oxnas_810_eabi_wd_prod_defconfig
++++ b/arch/arm/configs/oxnas_810_eabi_wd_prod_defconfig
+@@ -158,6 +158,8 @@ CONFIG_OXNAS_VERSION_0X810=y
+ # CONFIG_OXNAS_VERSION_0X850 is not set
+ # CONFIG_ARCH_OXNAS_UART1 is not set
+ CONFIG_ARCH_OXNAS_UART2=y
++CONFIG_ARCH_OXNAS_UART2_DEBUG=y
++CONFIG_ARCH_OXNAS_UART2_BOOTPROGRESS=y
+ # CONFIG_ARCH_OXNAS_UART2_MODEM is not set
+ # CONFIG_ARCH_OXNAS_UART3 is not set
+ # CONFIG_ARCH_OXNAS_UART4 is not set
+diff --git a/arch/arm/mach-oxnas/Kconfig b/arch/arm/mach-oxnas/Kconfig
+index e83a70c..1e0c71a 100644
+--- a/arch/arm/mach-oxnas/Kconfig
++++ b/arch/arm/mach-oxnas/Kconfig
+@@ -66,6 +66,20 @@ config ARCH_OXNAS_UART1
+ 		UARTs will be mapped to ttySn numbers from UART1 to UART4, only
+ 		including those UARTs selected to be present
+ 
++config ARCH_OXNAS_UART1_DEBUG
++	bool "Use UART1 as debug channel"
++	depends on ARCH_OXNAS_UART1
++	default n
++	help
++		This enables UART1 to be usable as debug channel.
++
++config ARCH_OXNAS_UART1_BOOTPROGRESS
++	bool "Display boot progress over UART1"
++	depends on ARCH_OXNAS_UART1
++	default n
++	help
++		This enables displaying boot progress over UART1.
++
+ config ARCH_OXNAS_UART1_MODEM
+ 	bool "Support UART1 modem control lines"
+ 	depends on ARCH_OXNAS_UART1
+@@ -81,6 +95,20 @@ config ARCH_OXNAS_UART2
+ 		UARTs will be mapped to ttySn numbers from UART1 to UART4, only
+ 		including those UARTs selected to be present
+ 
++config ARCH_OXNAS_UART2_DEBUG
++	bool "Use UART2 as debug channel"
++	depends on ARCH_OXNAS_UART2
++	default n
++	help
++		This enables UART2 to be usable as debug channel.
++
++config ARCH_OXNAS_UART2_BOOTPROGRESS
++	bool "Display boot progress over UART2"
++	depends on ARCH_OXNAS_UART2
++	default n
++	help
++		This enables displaying boot progress over UART2.
++
+ config ARCH_OXNAS_UART2_MODEM
+ 	bool "Support UART2 modem control lines"
+ 	depends on ARCH_OXNAS_UART2
+@@ -96,6 +124,20 @@ config ARCH_OXNAS_UART3
+ 		UARTs will be mapped to ttySn numbers from UART1 to UART4, only
+ 		including those UARTs selected to be present
+ 
++config ARCH_OXNAS_UART3_DEBUG
++	bool "Use UART3 as debug channel"
++	depends on ARCH_OXNAS_UART3
++	default n
++	help
++		This enables UART3 to be usable as debug channel.
++
++config ARCH_OXNAS_UART3_BOOTPROGRESS
++	bool "Display boot progress over UART3"
++	depends on ARCH_OXNAS_UART3
++	default n
++	help
++		This enables displaying boot progress over UART3.
++
+ config ARCH_OXNAS_UART3_MODEM
+ 	bool "Support UART3 modem control lines"
+ 	depends on ARCH_OXNAS_UART3
+@@ -114,6 +156,20 @@ config ARCH_OXNAS_UART4
+ 		UART4 always has its modem control lines available on external pins
+ 		when selected (overlaying PCI functions)
+ 
++config ARCH_OXNAS_UART4_DEBUG
++	bool "Use UART4 as debug channel"
++	depends on ARCH_OXNAS_UART4
++	default n
++	help
++		This enables UART4 to be usable as debug channel.
++
++config ARCH_OXNAS_UART4_BOOTPROGRESS
++	bool "Display boot progress over UART4"
++	depends on ARCH_OXNAS_UART4
++	default n
++	help
++		This enables displaying boot progress over UART4.
++
+ config ARCH_OXNAS_PCI_REQGNT_0
+ 	bool "Enable req/gnt for PCI device 0"
+ 	depends on PCI
+diff --git a/include/asm-arm/arch-oxnas/debug-macro.S b/include/asm-arm/arch-oxnas/debug-macro.S
+index 2a16052..20c66d0 100644
+--- a/include/asm-arm/arch-oxnas/debug-macro.S
++++ b/include/asm-arm/arch-oxnas/debug-macro.S
+@@ -14,13 +14,13 @@
+ 		.macro  addruart,rx
+ 		mrc		p15, 0, \rx, c1, c0
+ 		tst		\rx, #1					@ MMU enabled?
+-#ifdef CONFIG_ARCH_OXNAS_UART1
++#ifdef CONFIG_ARCH_OXNAS_UART1_DEBUG
+ 		ldreq	\rx, =UART_1_BASE_PA	@ physical base address
+ 		ldrne	\rx, =UART_1_BASE		@ virtual address
+-#elif CONFIG_ARCH_OXNAS_UART2
++#elif CONFIG_ARCH_OXNAS_UART2_DEBUG
+ 		ldreq	\rx, =UART_2_BASE_PA	@ physical base address
+ 		ldrne	\rx, =UART_2_BASE		@ virtual address
+-#elif CONFIG_ARCH_OXNAS_UART3
++#elif CONFIG_ARCH_OXNAS_UART3_DEBUG
+ 		ldreq	\rx, =UART_3_BASE_PA	@ physical base address
+ 		ldrne	\rx, =UART_3_BASE		@ virtual address
+ #else
+diff --git a/include/asm-arm/arch-oxnas/uncompress.h b/include/asm-arm/arch-oxnas/uncompress.h
+index c54c288..93bf90a 100644
+--- a/include/asm-arm/arch-oxnas/uncompress.h
++++ b/include/asm-arm/arch-oxnas/uncompress.h
+@@ -12,13 +12,13 @@
+ 
+ static inline void putc(int c)
+ {
+-#ifdef CONFIG_ARCH_OXNAS_UART1
++#ifdef CONFIG_ARCH_OXNAS_UART1_BOOTPROGRESS
+     static volatile unsigned char* uart = (volatile unsigned char*)UART_1_BASE_PA;
+-#elif defined(CONFIG_ARCH_OXNAS_UART2)
++#elif defined(CONFIG_ARCH_OXNAS_UART2_BOOTPROGRESS)
+     static volatile unsigned char* uart = (volatile unsigned char*)UART_2_BASE_PA;
+-#elif defined(CONFIG_ARCH_OXNAS_UART3)
++#elif defined(CONFIG_ARCH_OXNAS_UART3_BOOTPROGRESS)
+     static volatile unsigned char* uart = (volatile unsigned char*)UART_3_BASE_PA;
+-#elif defined(CONFIG_ARCH_OXNAS_UART4)
++#elif defined(CONFIG_ARCH_OXNAS_UART4_BOOTPROGRESS)
+     static volatile unsigned char* uart = (volatile unsigned char*)UART_4_BASE_PA;
+ #else
+ #define NO_UART
+-- 
+1.7.1
+
