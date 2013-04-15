@@ -1,5 +1,6 @@
-0001-arm-oxnas-Added-OE-patch-to-support-oxe810.patch
-0002-arm-oxnas-Get-rid-of-CROSS_COMPILE-from-board-contex.patch
-0003-backported-from-trunk.patch
-0004-arm-oxnas-move-default-configuration.patch
-0005-arm-oxnas-add-Iomega-HMNHD-configuration.patch
+0001-arm-oxnas-Add-new-arch-by-Oxford-Semiconductor-Ltd.patch
+0002-arm-oxnas-Add-new-board-by-Oxford-Semiconductor-Ltd.patch
+0003-arm-oxnas-Get-rid-of-CROSS_COMPILE-from-board-contex.patch
+0004-backported-from-trunk.patch
+0005-arm-oxnas-move-default-configuration.patch
+0006-arm-oxnas-add-Iomega-HMNHD-configuration.patch

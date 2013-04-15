@@ -1,0 +1,4704 @@
+From 71d4ff3430ea69e6a0efd58961e740547242f469 Mon Sep 17 00:00:00 2001
+From: Stephan Linz <linz@li-pro.net>
+Date: Mon, 15 Apr 2013 16:32:20 +0200
+Subject: [PATCH] arm-oxnas: Add new arch by Oxford Semiconductor Ltd.
+
+Initial version of the original second stage boot code
+for OXE800 and OXE810 by Oxford Semiconductor Ltd. as part
+of the SDK 1.2.3-1117 RC1 (14th Nov 2008).
+
+Come from:
+    http://download.conceptronic.net/GPL/C05-328_CH3HNAS_GPL_Source_Code_SDK.zip
+
+Extracted by:
+    unzip C05-328_CH3HNAS_GPL_Source_Code_SDK.zip
+    mkdir .boot-oxe8x0
+    tar -C .boot-oxe8x0 --transform "s,^OXNAS810/src/boot/patch-1.1.2,," \
+        -xvzf CH3HNAS-SDK.tar.gz OXNAS810/src/boot/patch-1.1.2
+    rm -f CH3HNAS-SDK.tar.gz
+
+Applied by:
+    git apply --whitespace=fix .boot-oxe8x0/u-boot-1.1.2-oxnas.patch
+    git add *
+
+Signed-off-by: Stephan Linz <linz@li-pro.net>
+---
+ MAKEALL                       |    2 +-
+ Makefile                      |    8 +-
+ common/Makefile               |    3 +-
+ common/cmd_ext2.c             |    2 +-
+ common/cmd_ide.c              |  299 +++++-----
+ common/cmd_ledfail.c          |   58 ++
+ common/cmd_mem.c              |    8 +-
+ common/cmd_nvedit.c           |   13 +-
+ common/env_common.c           |    2 +-
+ common/env_disk.c             |  152 +++++
+ common/main.c                 |  199 ++++++-
+ cpu/arm11/Makefile            |   43 ++
+ cpu/arm11/config.mk           |   25 +
+ cpu/arm11/cpu.c               |  157 +++++
+ cpu/arm11/interrupts.c        |  330 ++++++++++
+ cpu/arm11/start.S             |  420 +++++++++++++
+ cpu/arm926ejs/config.mk       |    5 +-
+ cpu/arm926ejs/interrupts.c    |   18 +
+ cpu/arm926ejs/start.S         |   41 +-
+ drivers/cfi_flash.c           |   14 +
+ drivers/ns16550.c             |   21 +
+ drivers/serial.c              |    8 +-
+ examples/Makefile             |   12 +-
+ examples/mem_test.c           | 1321 +++++++++++++++++++++++++++++++++++++++++
+ include/_exports.h            |    1 +
+ include/asm-arm/barrier.h     |   25 +
+ include/asm-arm/global_data.h |    2 +-
+ include/asm-arm/mach-types.h  |   13 +
+ include/asm-arm/u-boot.h      |    2 +
+ include/ata.h                 |    5 +
+ include/cmd_confdefs.h        |    1 +
+ include/common.h              |    2 +-
+ include/configs/oxnas.h       |  595 +++++++++++++++++++
+ include/flash.h               |    2 +
+ include/ns16550.h             |    4 +
+ lib_arm/board.c               |   25 +-
+ net/net.c                     |    8 +-
+ net/tftp.c                    |   28 +-
+ 38 files changed, 3672 insertions(+), 202 deletions(-)
+ create mode 100644 common/cmd_ledfail.c
+ create mode 100644 common/env_disk.c
+ create mode 100644 cpu/arm11/Makefile
+ create mode 100644 cpu/arm11/config.mk
+ create mode 100644 cpu/arm11/cpu.c
+ create mode 100644 cpu/arm11/interrupts.c
+ create mode 100644 cpu/arm11/start.S
+ create mode 100644 examples/mem_test.c
+ create mode 100644 include/asm-arm/barrier.h
+ create mode 100644 include/configs/oxnas.h
+
+diff --git a/MAKEALL b/MAKEALL
+index 77d9487..ddcf13f 100644
+--- a/MAKEALL
++++ b/MAKEALL
+@@ -154,7 +154,7 @@ LIST_ARM9="	\
+ 	lpd7a400	mx1ads		mx1fs2		omap1510inn	\
+ 	omap1610h2	omap1610inn	omap730p2	scb9328		\
+ 	smdk2400	smdk2410	trab		VCMA9		\
+-	versatile							\
++	versatile	oxnas	\
+ "
+ 
+ #########################################################################
+diff --git a/Makefile b/Makefile
+index a8b5063..7ce0947 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1296,6 +1296,9 @@ smdk2410_config	:	unconfig
+ SX1_config :		unconfig
+ 	@./mkconfig $(@:_config=) arm arm925t sx1
+ 
++oxnas_config :	unconfig
++	@./mkconfig $(@:_config=) arm arm926ejs oxnas
++
+ # TRAB default configuration:	8 MB Flash, 32 MB RAM
+ trab_config \
+ trab_bigram_config \
+@@ -1561,11 +1564,12 @@ suzaku_config:	unconfig
+ clean:
+ 	find . -type f \
+ 		\( -name 'core' -o -name '*.bak' -o -name '*~' \
+-		-o -name '*.o'  -o -name '*.a'  \) -print \
++		-o -name '*.o'  -o -name '*.a' -o -name '.depend' \) -print \
+ 		| xargs rm -f
+ 	rm -f examples/hello_world examples/timer \
+ 	      examples/eepro100_eeprom examples/sched \
+-	      examples/mem_to_mem_idma2intr examples/82559_eeprom
++	      examples/mem_to_mem_idma2intr examples/82559_eeprom \
++              examples/mem_test
+ 	rm -f tools/img2srec tools/mkimage tools/envcrc tools/gen_eth_addr
+ 	rm -f tools/mpc86x_clk tools/ncb
+ 	rm -f tools/easylogo/easylogo tools/bmp_logo
+diff --git a/common/Makefile b/common/Makefile
+index 209e17d..b644590 100644
+--- a/common/Makefile
++++ b/common/Makefile
+@@ -40,9 +40,10 @@ COBJS	= main.o ACEX1K.o altera.o bedbug.o circbuf.o \
+ 	  cmd_nand.o cmd_net.o cmd_nvedit.o \
+ 	  cmd_pci.o cmd_pcmcia.o cmd_portio.o \
+ 	  cmd_reginfo.o cmd_reiser.o cmd_scsi.o cmd_spi.o cmd_universe.o cmd_usb.o cmd_vfd.o \
++	  cmd_ledfail.o \
+ 	  command.o console.o devices.o dlmalloc.o docecc.o \
+ 	  environment.o env_common.o \
+-	  env_nand.o env_dataflash.o env_flash.o env_eeprom.o env_nvram.o env_nowhere.o exports.o \
++	  env_nand.o env_dataflash.o env_flash.o env_eeprom.o env_nvram.o env_nowhere.o env_disk.o exports.o \
+ 	  flash.o fpga.o \
+ 	  hush.o kgdb.o lcd.o lists.o lynxkdi.o \
+ 	  memsize.o miiphybb.o miiphyutil.o \
+diff --git a/common/cmd_ext2.c b/common/cmd_ext2.c
+index f8e04ed..f52fb05 100644
+--- a/common/cmd_ext2.c
++++ b/common/cmd_ext2.c
+@@ -223,7 +223,7 @@ int do_ext2load (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+ 	PRINTF("Using device %s%d, partition %d\n", argv[1], dev, part);
+ 
+ 	if (part != 0) {
+-		if (get_partition_info (&dev_desc[dev], part, &info)) {
++		if (get_partition_info (dev_desc, part, &info)) {
+ 			printf ("** Bad partition %d **\n", part);
+ 			return(1);
+ 		}
+diff --git a/common/cmd_ide.c b/common/cmd_ide.c
+index 851ba52..c0ae4ed 100644
+--- a/common/cmd_ide.c
++++ b/common/cmd_ide.c
+@@ -193,6 +193,13 @@ ulong atapi_read (int device, lbaint_t blknr, ulong blkcnt, ulong *buffer);
+ static void set_pcmcia_timing (int pmode);
+ #endif
+ 
++#ifdef CONFIG_OXNAS
++extern unsigned char oxnas_sata_inb(int dev, int port);
++extern void oxnas_sata_outb(int dev, int port, unsigned char val);
++extern void oxnas_sata_output_data(int dev, ulong *sect_buf, int words);
++extern void oxnas_sata_input_data(int dev, ulong *sect_buf, int words);
++#endif // CONFIG_OXNAS
++
+ /* ------------------------------------------------------------------------- */
+ 
+ int do_ide (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+@@ -491,175 +498,103 @@ int do_diskboot (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+ 	return rcode;
+ }
+ 
+-/* ------------------------------------------------------------------------- */
+ 
+-void ide_init (void)
++static int ide_probe(int device)
+ {
++    int found = 0;
++
++    /* Select device */
++    udelay(100000);	    /* 100 ms */
++    ide_outb(device, ATA_DEV_HD, ATA_LBA | ATA_DEVICE(device));
++    udelay(100000);     /* 100 ms */
+ 
+-#ifdef CONFIG_IDE_8xx_DIRECT
+-	DECLARE_GLOBAL_DATA_PTR;
+-	volatile immap_t *immr = (immap_t *)CFG_IMMR;
+-	volatile pcmconf8xx_t *pcmp = &(immr->im_pcmcia);
+-#endif
+ 	unsigned char c;
++    int i = 0;
++    do {
++        udelay(10000);  /* 10 ms */
++
++        c = ide_inb(device, ATA_STATUS);
++        if (++i > (ATA_RESET_TIME * 100)) {
++            PRINTF("ide_probe() timeout\n");
++            ide_led((LED_IDE1 | LED_IDE2), 0);  /* LED's off */
++            return found;
++        }
++        if ((i >= 100) && ((i%100) == 0)) {
++            putc ('.');
++        }
++    } while (c & ATA_STAT_BUSY);
++
++    if (c & (ATA_STAT_BUSY | ATA_STAT_FAULT)) {
++        PRINTF("ide_probe() status = 0x%02X ", c);
++#ifndef CONFIG_ATAPI    /* ATAPI Devices do not set DRDY */
++    } else  if ((c & ATA_STAT_READY) == 0) {
++        PRINTF("ide_probe() status = 0x%02X ", c);
++#endif
++    } else {
++        found = 1;
++    }
++
++    return found;
++}
++
++void ide_init(void)
++{
++	static int ide_init_called = 0;
+ 	int i, bus;
+-#ifdef CONFIG_AMIGAONEG3SE
+-	unsigned int max_bus_scan;
+-	unsigned int ata_reset_time;
+-	char *s;
+-#endif
+-#ifdef CONFIG_IDE_8xx_PCCARD
+-	extern int pcmcia_on (void);
+-	extern int ide_devices_found; /* Initialized in check_ide_device() */
+-#endif	/* CONFIG_IDE_8xx_PCCARD */
++
++	if (ide_init_called) {
++		return;
++	}
++	ide_init_called = 1;
+ 
+ #ifdef CONFIG_IDE_PREINIT
+-	extern int ide_preinit (void);
++	extern int ide_preinit(void);
+ 	WATCHDOG_RESET();
+ 
+-	if (ide_preinit ()) {
++    printf("Initialising disks\n");
++	if (ide_preinit()) {
+ 		puts ("ide_preinit failed\n");
+ 		return;
+ 	}
+ #endif	/* CONFIG_IDE_PREINIT */
+ 
+-#ifdef CONFIG_IDE_8xx_PCCARD
+-	extern int pcmcia_on (void);
+-	extern int ide_devices_found; /* Initialized in check_ide_device() */
+-
+-	WATCHDOG_RESET();
+-
+-	ide_devices_found = 0;
+-	/* initialize the PCMCIA IDE adapter card */
+-	pcmcia_on();
+-	if (!ide_devices_found)
+-		return;
+-	udelay (1000000);	/* 1 s */
+-#endif	/* CONFIG_IDE_8xx_PCCARD */
+-
+ 	WATCHDOG_RESET();
+ 
+-#ifdef CONFIG_IDE_8xx_DIRECT
+-	/* Initialize PIO timing tables */
+-	for (i=0; i <= IDE_MAX_PIO_MODE; ++i) {
+-	    pio_config_clk[i].t_setup  = PCMCIA_MK_CLKS(pio_config_ns[i].t_setup,
+-							    gd->bus_clk);
+-	    pio_config_clk[i].t_length = PCMCIA_MK_CLKS(pio_config_ns[i].t_length,
+-							    gd->bus_clk);
+-	    pio_config_clk[i].t_hold   = PCMCIA_MK_CLKS(pio_config_ns[i].t_hold,
+-							    gd->bus_clk);
+-	    PRINTF ("PIO Mode %d: setup=%2d ns/%d clk"
+-		    "  len=%3d ns/%d clk"
+-		    "  hold=%2d ns/%d clk\n",
+-		    i,
+-		    pio_config_ns[i].t_setup,  pio_config_clk[i].t_setup,
+-		    pio_config_ns[i].t_length, pio_config_clk[i].t_length,
+-		    pio_config_ns[i].t_hold,   pio_config_clk[i].t_hold);
+-	}
+-#endif /* CONFIG_IDE_8xx_DIRECT */
+-
+ 	/* Reset the IDE just to be sure.
+ 	 * Light LED's to show
+ 	 */
+-	ide_led ((LED_IDE1 | LED_IDE2), 1);		/* LED's on	*/
+-	ide_reset (); /* ATAPI Drives seems to need a proper IDE Reset */
+-
+-#ifdef CONFIG_IDE_8xx_DIRECT
+-	/* PCMCIA / IDE initialization for common mem space */
+-	pcmp->pcmc_pgcrb = 0;
+-
+-	/* start in PIO mode 0 - most relaxed timings */
+-	pio_mode = 0;
+-	set_pcmcia_timing (pio_mode);
+-#endif /* CONFIG_IDE_8xx_DIRECT */
++	ide_led((LED_IDE1 | LED_IDE2), 1);		/* LED's on	*/
++	ide_reset(); /* ATAPI Drives seems to need a proper IDE Reset */
+ 
+ 	/*
+ 	 * Wait for IDE to get ready.
+ 	 * According to spec, this can take up to 31 seconds!
+ 	 */
+-#ifndef CONFIG_AMIGAONEG3SE
+-	for (bus=0; bus<CFG_IDE_MAXBUS; ++bus) {
+-		int dev = bus * (CFG_IDE_MAXDEVICE / CFG_IDE_MAXBUS);
+-#else
+-	s = getenv("ide_maxbus");
+-	if (s)
+-	    max_bus_scan = simple_strtol(s, NULL, 10);
+-	else
+-	    max_bus_scan = CFG_IDE_MAXBUS;
+-
+-	for (bus=0; bus<max_bus_scan; ++bus) {
+-		int dev = bus * (CFG_IDE_MAXDEVICE / max_bus_scan);
+-#endif
+-
+-#ifdef CONFIG_IDE_8xx_PCCARD
+-		/* Skip non-ide devices from probing */
+-		if ((ide_devices_found & (1 << bus)) == 0) {
+-			ide_led ((LED_IDE1 | LED_IDE2), 0); /* LED's off */
+-			continue;
+-		}
+-#endif
+-		printf ("Bus %d: ", bus);
+-
+-		ide_bus_ok[bus] = 0;
+-
+-		/* Select device
+-		 */
+-		udelay (100000);		/* 100 ms */
+-		ide_outb (dev, ATA_DEV_HD, ATA_LBA | ATA_DEVICE(dev));
+-		udelay (100000);		/* 100 ms */
+-#ifdef CONFIG_AMIGAONEG3SE
+-		ata_reset_time = ATA_RESET_TIME;
+-		s = getenv("ide_reset_timeout");
+-		if (s) ata_reset_time = 2*simple_strtol(s, NULL, 10);
+-#endif
+-		i = 0;
+-		do {
+-			udelay (10000);		/* 10 ms */
+-
+-			c = ide_inb (dev, ATA_STATUS);
+-			i++;
+-#ifdef CONFIG_AMIGAONEG3SE
+-			if (i > (ata_reset_time * 100)) {
+-#else
+-			if (i > (ATA_RESET_TIME * 100)) {
+-#endif
+-				puts ("** Timeout **\n");
+-				ide_led ((LED_IDE1 | LED_IDE2), 0); /* LED's off */
+-#ifdef CONFIG_AMIGAONEG3SE
+-				/* If this is the second bus, the first one was OK */
+-				if (bus != 0) {
+-				    ide_bus_ok[bus] = 0;
+-				    goto skip_bus;
+-				}
+-#endif
+-				return;
+-			}
+-			if ((i >= 100) && ((i%100)==0)) {
+-				putc ('.');
+-			}
+-		} while (c & ATA_STAT_BUSY);
+-
+-		if (c & (ATA_STAT_BUSY | ATA_STAT_FAULT)) {
+-			puts ("not available  ");
+-			PRINTF ("Status = 0x%02X ", c);
+-#ifndef CONFIG_ATAPI /* ATAPI Devices do not set DRDY */
+-		} else  if ((c & ATA_STAT_READY) == 0) {
+-			puts ("not available  ");
+-			PRINTF ("Status = 0x%02X ", c);
+-#endif
+-		} else {
+-			puts ("OK ");
+-			ide_bus_ok[bus] = 1;
+-		}
+-		WATCHDOG_RESET();
+-	}
+-
+-#ifdef CONFIG_AMIGAONEG3SE
+-      skip_bus:
+-#endif
+-	putc ('\n');
++    printf("Detecting SATA busses:\n");
++    for (bus=0; bus < CFG_IDE_MAXBUS; ++bus) {
++        printf("Bus %d: ", bus);
++
++        /* Try to discover if bus is present by probing first device on bus */
++        int device = bus * (CFG_IDE_MAXDEVICE / CFG_IDE_MAXBUS);
++        ide_bus_ok[bus] = ide_probe(device);
++        if (ide_bus_ok[bus]) {
++            puts("Found first device OK\n");
++        } else {
++            WATCHDOG_RESET();
++
++            /* Try second device on bus */
++            ide_bus_ok[bus] = ide_probe(++device);
++            if (ide_bus_ok[bus]) {
++                puts("Found second device OK\n");
++            } else {
++                puts("No devices found\n");
++            }
++        }
++
++        WATCHDOG_RESET();
++    }
+ 
+-	ide_led ((LED_IDE1 | LED_IDE2), 0);	/* LED's off	*/
++	ide_led((LED_IDE1 | LED_IDE2), 0);	/* LED's off	*/
+ 
+ 	curr_device = -1;
+ 	for (i=0; i<CFG_IDE_MAXDEVICE; ++i) {
+@@ -675,13 +610,12 @@ void ide_init (void)
+ 		ide_dev_desc[i].block_read=ide_read;
+ 		if (!ide_bus_ok[IDE_BUS(i)])
+ 			continue;
+-		ide_led (led, 1);		/* LED on	*/
++		ide_led(led, 1);		/* LED on	*/
+ 		ide_ident(&ide_dev_desc[i]);
+-		ide_led (led, 0);		/* LED off	*/
++		ide_led(led, 0);		/* LED off	*/
+ 		dev_print(&ide_dev_desc[i]);
+-/*		ide_print (i); */
+ 		if ((ide_dev_desc[i].lba > 0) && (ide_dev_desc[i].blksz > 0)) {
+-			init_part (&ide_dev_desc[i]);			/* initialize partition type */
++			init_part(&ide_dev_desc[i]);    /* initialize partition type */
+ 			if (curr_device < 0)
+ 				curr_device = i;
+ 		}
+@@ -689,6 +623,11 @@ void ide_init (void)
+ 	WATCHDOG_RESET();
+ }
+ 
++int is_device_present(int device_number)
++{
++    return ide_dev_desc[device_number].part_type != PART_TYPE_UNKNOWN;
++}
++
+ /* ------------------------------------------------------------------------- */
+ 
+ block_dev_desc_t * ide_get_dev(int dev)
+@@ -798,6 +737,11 @@ ide_outb(int dev, int port, unsigned char val)
+ 	EIEIO;
+ 	*((uchar *)(ATA_CURR_BASE(dev)+port)) = val;
+ }
++#elif defined(CONFIG_OXNAS)
++static void __inline__ ide_outb(int dev, int port, unsigned char val)
++{
++    oxnas_sata_outb(dev, port, val);
++}
+ #else	/* ! __PPC__ */
+ static void __inline__
+ ide_outb(int dev, int port, unsigned char val)
+@@ -819,6 +763,11 @@ ide_inb(int dev, int port)
+ 		dev, port, (ATA_CURR_BASE(dev)+port), val);
+ 	return (val);
+ }
++#elif defined(CONFIG_OXNAS)
++static unsigned char __inline__ ide_inb(int dev, int port)
++{
++    return oxnas_sata_inb(dev, port);
++}
+ #else	/* ! __PPC__ */
+ static unsigned char __inline__
+ ide_inb(int dev, int port)
+@@ -921,6 +870,11 @@ output_data(int dev, ulong *sect_buf, int words)
+ 	}
+ #endif	/* CONFIG_HMI10 */
+ }
++#elif defined(CONFIG_OXNAS)
++static void output_data(int dev, ulong *sect_buf, int words)
++{
++    oxnas_sata_output_data(dev, sect_buf, words);
++}
+ #else	/* ! __PPC__ */
+ static void
+ output_data(int dev, ulong *sect_buf, int words)
+@@ -968,6 +922,11 @@ input_data(int dev, ulong *sect_buf, int words)
+ 	}
+ #endif	/* CONFIG_HMI10 */
+ }
++#elif defined(CONFIG_OXNAS)
++static void input_data(int dev, ulong *sect_buf, int words)
++{
++    oxnas_sata_input_data(dev, sect_buf, words);
++}
+ #else	/* ! __PPC__ */
+ static void
+ input_data(int dev, ulong *sect_buf, int words)
+@@ -1001,10 +960,36 @@ input_data_short(int dev, ulong *sect_buf, int words)
+ 
+ /* -------------------------------------------------------------------------
+  */
++#ifdef CONFIG_OXNAS
++static void byte_swap_and_trim(char* buf)
++{
++    char *src = buf;
++
++    // Swap bytes in 16-bit words
++    while ((*src != '\0') && (*(src+1) != '\0')) {
++        char tmp = *(src+1);
++        *(src+1) = *src;
++        *src = tmp;
++        src += 2;
++    }
++
++    // Trim leading spaces
++    src = buf;
++    while (*src == ' ') {
++        ++src;
++    }
++    if (src != buf) {
++        memcpy(buf, src, strlen(src));
++        buf[strlen(buf) - (src-buf)] = '\0';
++    }
++}
++#endif // CONFIG_OXNAS
++
+ static void ide_ident (block_dev_desc_t *dev_desc)
+ {
+ 	ulong iobuf[ATA_SECTORWORDS];
+ 	unsigned char c;
++    unsigned int i;
+ 	hd_driveid_t *iop = (hd_driveid_t *)iobuf;
+ 
+ #ifdef CONFIG_AMIGAONEG3SE
+@@ -1023,6 +1008,10 @@ static void ide_ident (block_dev_desc_t *dev_desc)
+ 	device=dev_desc->dev;
+ 	printf ("  Device %d: ", device);
+ 
++    for ( i=0; i < ATA_SECTORWORDS; ++i) {
++        iobuf[i] = 0;
++    }
++
+ #ifdef CONFIG_AMIGAONEG3SE
+ 	s = getenv("ide_maxbus");
+ 	if (s) {
+@@ -1110,20 +1099,22 @@ static void ide_ident (block_dev_desc_t *dev_desc)
+ 
+ 	input_swap_data (device, iobuf, ATA_SECTORWORDS);
+ 
+-	ident_cpy (dev_desc->revision, iop->fw_rev, sizeof(dev_desc->revision));
+-	ident_cpy (dev_desc->vendor, iop->model, sizeof(dev_desc->vendor));
+-	ident_cpy (dev_desc->product, iop->serial_no, sizeof(dev_desc->product));
++	ident_cpy(dev_desc->revision, iop->fw_rev, sizeof(dev_desc->revision));
++	ident_cpy(dev_desc->vendor, iop->model, sizeof(dev_desc->vendor));
++	ident_cpy(dev_desc->product, iop->serial_no, sizeof(dev_desc->product));
++
+ #ifdef __LITTLE_ENDIAN
+ 	/*
+-	 * firmware revision and model number have Big Endian Byte
++	 * firmware revision, model number and product have Big Endian Byte
+ 	 * order in Word. Convert both to little endian.
+ 	 *
+ 	 * See CF+ and CompactFlash Specification Revision 2.0:
+ 	 * 6.2.1.6: Identfy Drive, Table 39 for more details
+ 	 */
+ 
+-	strswab (dev_desc->revision);
+-	strswab (dev_desc->vendor);
++	byte_swap_and_trim(dev_desc->revision);
++	byte_swap_and_trim(dev_desc->vendor);
++	byte_swap_and_trim(dev_desc->product);
+ #endif /* __LITTLE_ENDIAN */
+ 
+ 	if ((iop->config & 0x0080)==0x0080)
+diff --git a/common/cmd_ledfail.c b/common/cmd_ledfail.c
+new file mode 100644
+index 0000000..e1a7dc0
+--- /dev/null
++++ b/common/cmd_ledfail.c
+@@ -0,0 +1,58 @@
++
++#include <common.h>
++#include <command.h>
++
++#if (CONFIG_COMMANDS & CFG_CMD_LEDFAIL)
++#define FAILURE_LED (1 << (34-32))
++
++#define GPIO_B	0x44100000
++#define WARN_GPIO_OUT_REG			(GPIO_B + 0x10)
++#define WARN_GPIO_OUT_ENABLE_SET	(GPIO_B + 0x1C)
++#define WARN_GPIO_OUT_ENABLE_CLR	(GPIO_B + 0x20)
++
++static void ledfail_light(void)
++{
++	printf("Light LED\n");
++	/* Light the failure LED - assumes active low drive */
++	u_int32_t led_state = *((volatile u_int32_t *)WARN_GPIO_OUT_REG);
++	led_state = led_state & ~FAILURE_LED;
++	*((volatile u_int32_t *)WARN_GPIO_OUT_REG) = led_state;
++
++	/* Enable GPIO for output */
++	*((volatile u_int32_t *)WARN_GPIO_OUT_ENABLE_SET) = FAILURE_LED;
++}
++
++static void ledfail_extinguish(void)
++{
++	printf("Extinguish LED\n");
++	/* Extinguish the failure LED - assumes active low drive */
++	u_int32_t led_state = *((volatile u_int32_t *)WARN_GPIO_OUT_REG);
++	led_state = led_state | FAILURE_LED;
++	*((volatile u_int32_t *)WARN_GPIO_OUT_REG) = led_state;
++
++    /* Clear the failure bit output enable in GPIO's */
++	*((volatile u_int32_t *)WARN_GPIO_OUT_ENABLE_CLR) = FAILURE_LED;
++}
++
++int do_ledfail(cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
++{
++	if (argc != 2) {
++		printf ("Usage:\n%s\n", cmdtp->usage);
++		return 1;
++	}
++
++	ulong arg = simple_strtoul(argv[1], NULL, 10);
++	switch (arg) {
++		case 0:
++			ledfail_extinguish();
++			break;
++		case 1:
++			ledfail_light();
++			break;
++	}
++
++	return 0;
++}
++
++U_BOOT_CMD(ledfail, 2, 2, do_ledfail, "ledfail - Extinguish (0) or light (1) failure LED\n", NULL);
++#endif	/* CFG_CMD_LEDFAIL */
+diff --git a/common/cmd_mem.c b/common/cmd_mem.c
+index bafb1d6..89c39fb 100644
+--- a/common/cmd_mem.c
++++ b/common/cmd_mem.c
+@@ -731,13 +731,17 @@ int do_mem_mtest (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+ 	if (argc > 1) {
+ 		start = (ulong *)simple_strtoul(argv[1], NULL, 16);
+ 	} else {
+-		start = (ulong *)CFG_MEMTEST_START;
++		DECLARE_GLOBAL_DATA_PTR;
++
++		start = (ulong *)(gd->bd->bi_dram[0].start);
+ 	}
+ 
+ 	if (argc > 2) {
+ 		end = (ulong *)simple_strtoul(argv[2], NULL, 16);
+ 	} else {
+-		end = (ulong *)(CFG_MEMTEST_END);
++		DECLARE_GLOBAL_DATA_PTR;
++
++		end = (ulong *)(start + gd->bd->bi_dram[0].size);
+ 	}
+ 
+ 	if (argc > 3) {
+diff --git a/common/cmd_nvedit.c b/common/cmd_nvedit.c
+index 578b0ca..380c8c9 100644
+--- a/common/cmd_nvedit.c
++++ b/common/cmd_nvedit.c
+@@ -55,8 +55,9 @@
+     !defined(CFG_ENV_IS_IN_FLASH)	&& \
+     !defined(CFG_ENV_IS_IN_DATAFLASH)	&& \
+     !defined(CFG_ENV_IS_IN_NAND)	&& \
++    !defined(CFG_ENV_IS_IN_DISK)	&& \
+     !defined(CFG_ENV_IS_NOWHERE)
+-# error Define one of CFG_ENV_IS_IN_{NVRAM|EEPROM|FLASH|DATAFLASH|NOWHERE}
++# error Define one of CFG_ENV_IS_IN_{NVRAM|EEPROM|FLASH|DATAFLASH|DISK|NOWHERE}
+ #endif
+ 
+ #define XMK_STR(x)	#x
+@@ -483,7 +484,7 @@ int do_askenv ( cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+  * or NULL if not found
+  */
+ 
+-char *getenv (uchar *name)
++char *getenv (const uchar *name)
+ {
+ 	int i, nxt;
+ 
+@@ -530,7 +531,9 @@ int getenv_r (uchar *name, uchar *buf, unsigned len)
+ 	return (-1);
+ }
+ 
+-#if defined(CFG_ENV_IS_IN_NVRAM) || defined(CFG_ENV_IS_IN_EEPROM) || \
++#if defined(CFG_ENV_IS_IN_NVRAM) || \
++    defined(CFG_ENV_IS_IN_EEPROM) || \
++    defined(CFG_ENV_IS_IN_DISK) || \
+     ((CONFIG_COMMANDS & (CFG_CMD_ENV|CFG_CMD_FLASH)) == \
+       (CFG_CMD_ENV|CFG_CMD_FLASH))
+ int do_saveenv (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
+@@ -586,7 +589,9 @@ U_BOOT_CMD(
+ 	"    - delete environment variable 'name'\n"
+ );
+ 
+-#if defined(CFG_ENV_IS_IN_NVRAM) || defined(CFG_ENV_IS_IN_EEPROM) || \
++#if defined(CFG_ENV_IS_IN_NVRAM) || \
++    defined(CFG_ENV_IS_IN_EEPROM) || \
++    defined(CFG_ENV_IS_IN_DISK) || \
+     ((CONFIG_COMMANDS & (CFG_CMD_ENV|CFG_CMD_FLASH)) == \
+       (CFG_CMD_ENV|CFG_CMD_FLASH))
+ U_BOOT_CMD(
+diff --git a/common/env_common.c b/common/env_common.c
+index 9be4cc1..a822f9c 100644
+--- a/common/env_common.c
++++ b/common/env_common.c
+@@ -42,7 +42,7 @@
+ 	extern void disable_nvram(void);
+ #endif
+ 
+-#undef DEBUG_ENV
++//#undef DEBUG_ENV
+ #ifdef DEBUG_ENV
+ #define DEBUGF(fmt,args...) printf(fmt ,##args)
+ #else
+diff --git a/common/env_disk.c b/common/env_disk.c
+new file mode 100644
+index 0000000..64ff704
+--- /dev/null
++++ b/common/env_disk.c
+@@ -0,0 +1,152 @@
++/*
++ * (C) Copyright 2006
++ * Oxford Semiconductor Ltd
++ *
++ * See file CREDITS for list of people who contributed to this
++ * project.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++#include <common.h>
++
++#if defined(CFG_ENV_IS_IN_DISK)
++
++#include <command.h>
++#include <environment.h>
++#include <ide.h>
++
++extern int is_device_present(int device_number);
++
++/* Point to the environment as held in SRAM */
++env_t *env_ptr = NULL;
++
++char *env_name_spec = "Disk";
++
++/* The default environment compiled into U-Boot */
++extern uchar default_environment[];
++
++uchar env_get_char_spec(int index)
++{
++    DECLARE_GLOBAL_DATA_PTR;
++
++    return *((uchar *)(gd->env_addr + index));
++}
++
++#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
++
++void env_relocate_spec(void)
++{
++    /* Compute the CRC of the environment in SRAM, copied from disk at boot */
++    env_t *sram_env = (env_t*)CFG_ENV_ADDR;
++    ulong  crc = crc32(0, sram_env->data, CFG_ENV_SIZE - offsetof(env_t, data));
++
++    /* Copy the SRAM environment and CRC to the working environment */
++    memcpy(env_ptr->data, sram_env->data, CFG_ENV_SIZE - offsetof(env_t, data));
++    env_ptr->crc = crc;
++}
++
++int saveenv(void)
++{
++    /* Compute the CRC of the working environment */
++    env_ptr->crc = crc32(0, env_ptr->data, CFG_ENV_SIZE - offsetof(env_t, data));
++
++    /* Copy the working environment to the reserved area on each disk device */
++    int status = 1;
++    int i;
++    for (i=0; i < CFG_IDE_MAXDEVICE; ++i) {
++        if (!is_device_present(i)) {
++            continue;
++        }
++
++		/* Write environment to the main environment area on disk */
++        unsigned long written = ide_write(i, CFG_ENV_DISK_SECTOR, CFG_ENV_SIZE/512, (ulong*)env_ptr);
++        if (written != CFG_ENV_SIZE/512) {
++			printf("Saving environment to disk %d primary image failed\n", i);
++            status = 0;
++        } else {
++			/* Write environment to the redundant environment area on disk */
++			written = ide_write(i, CFG_ENV_DISK_REDUNDANT_SECTOR, CFG_ENV_SIZE/512, (ulong*)env_ptr);
++			if (written != CFG_ENV_SIZE/512) {
++				printf("Saving environment to disk %d secondary image failed\n", i);
++				status = 0;
++			}
++		}
++    }
++
++    return status;
++}
++
++static int check_sram_env_integrity(void)
++{
++    DECLARE_GLOBAL_DATA_PTR;
++
++	env_t *sram_env = (env_t*)CFG_ENV_ADDR;
++	ulong crc = crc32(0, sram_env->data, CFG_ENV_SIZE - offsetof(env_t, data));
++
++	if (crc == sram_env->crc) {
++		gd->env_addr  = (ulong)sram_env->data;
++		gd->env_valid = 1;
++	}
++
++	return gd->env_valid;
++}
++
++int env_init(void)
++{
++    DECLARE_GLOBAL_DATA_PTR;
++
++	/* Have not yet found a valid environment */
++	gd->env_valid = 0;
++
++	/* Need SATA available to load environment from alternate disk locations */
++	ide_init();
++
++	int i;
++    for (i=0; i < CFG_IDE_MAXDEVICE; ++i) {
++        if (!is_device_present(i)) {
++            continue;
++        }
++
++		/* Read environment from the primary environment area on disk */
++        unsigned long read = ide_read(i, CFG_ENV_DISK_SECTOR, CFG_ENV_SIZE/512, (ulong*)CFG_ENV_ADDR);
++        if (read == CFG_ENV_SIZE/512) {
++			/* Check integrity of primary environment data */
++			if (check_sram_env_integrity()) {
++				printf("Environment successfully read from disk %d primary image\n", i);
++				break;
++			}
++        }
++
++		/* Read environment from the secondary environment area on disk */
++		read = ide_read(i, CFG_ENV_DISK_REDUNDANT_SECTOR, CFG_ENV_SIZE/512, (ulong*)CFG_ENV_ADDR);
++		if (read == CFG_ENV_SIZE/512) {
++			/* Check integrity of secondary environment data */
++			if (check_sram_env_integrity()) {
++				printf("Environment successfully read from disk %d secondary image\n", i);
++				break;
++			}
++		}
++	}
++
++	if (!gd->env_valid) {
++		printf("Failed to read valid environment from disk, using built-in default\n");
++        gd->env_addr  = (ulong)default_environment;
++        gd->env_valid = 0;
++	}
++
++    return 0;
++}
++#endif // CFG_ENV_IS_IN_DISK
+diff --git a/common/main.c b/common/main.c
+index 0869426..e285935 100644
+--- a/common/main.c
++++ b/common/main.c
+@@ -182,7 +182,7 @@ static __inline__ int abortboot(int bootdelay)
+ 			else {
+ 				for (i = 0; i < presskey_max - 1; i ++)
+ 					presskey [i] = presskey [i + 1];
+-
++do_recovery
+ 				presskey [i] = getc();
+ 			}
+ 		}
+@@ -298,6 +298,47 @@ static __inline__ int abortboot(int bootdelay)
+ 
+ /****************************************************************************/
+ 
++#if defined(CONFIG_OXNAS)
++/* This function parses the bootargs and removes the string specified
++ * (if present) from it
++ */
++void remove_string_from_bootargs(const char * toremove)
++{
++	/* Get a copy of the bootargs string from the runtime environment */
++	char tempBuf[1024];
++	char* cmd_string = strcpy(&tempBuf[0], getenv("bootargs"));
++
++	/* Find the extent of token in the bootargs string */
++	char* token = strstr(cmd_string, toremove);
++	char* token_end = token;
++	while ((*token_end != ' ') &&
++		   (*token_end != '\0')) {
++		++token_end;
++	}
++
++	if ((*token_end == '\0') && (token != token_end)) {
++		/*  token is last in bootargs string */
++		if (token != cmd_string) {
++			/* Is not the only token, so erase token and previous space" */
++			*(token-1) = '\0';
++		} else {
++			/* Is the only token, so no previous space to erase */
++			*token = '\0';
++		}
++	} else {
++		/* token is at intermediate location in bootargs string */
++		if (*token_end == ' ') {
++			++token_end;
++		}
++		/* Form the bootargs string without the token present */
++		strcpy(token, token_end);
++	}
++
++	/* Save the revised bootargs string to the runtime environment */
++	setenv("bootargs", cmd_string);
++}
++#endif // CONFIG_OXNAS
++
+ void main_loop (void)
+ {
+ #ifndef CFG_HUSH_PARSER
+@@ -369,6 +410,162 @@ void main_loop (void)
+ 	install_auto_complete();
+ #endif
+ 
++
++#if defined(CONFIG_OXNAS)
++	/* Set the memory size given to Linux */
++	{
++		DECLARE_GLOBAL_DATA_PTR;
++
++		/* Get a copy of the bootargs string from the runtime environment */
++		char tempBuf[1024];
++		char* cmd_string;
++
++		remove_string_from_bootargs("mem=");
++
++		cmd_string = strcpy(&tempBuf[0], getenv("bootargs"));
++
++		/* How many MB of SDRAM are present */
++		int megabytes = gd->bd->bi_dram[0].size >> 20;
++
++		/* Append the memory token to the bootargs string */
++		switch (megabytes) {
++			case 64:
++				cmd_string = strcat(cmd_string, " mem=64M");
++				break;
++			case 128:
++				cmd_string = strcat(cmd_string, " mem=128M");
++				break;
++			case 256:
++				cmd_string = strcat(cmd_string, " mem=256M");
++				break;
++			default:
++				printf("Unsupported memory size, defaulting to 64M\n");
++				cmd_string = strcat(cmd_string, " mem=64M");
++		}
++
++		/* Save the revised bootargs string to the runtime environment */
++		setenv("bootargs", cmd_string);
++	}
++
++	/* Upgrade, recovery and power button monitor code
++	 */
++	int do_recovery = 0; /* default no recovery */
++
++	/* Read the upgrade flag from disk into memory */
++	ide_init();
++	run_command("ide read 48700000 120 1", 0);
++
++	char upgrade_mode = *(volatile char*)0x48700000;
++	char recovery_mode = *(volatile char*)0x48700001;
++	char controlled_pd_mode = *(volatile char*)0x48700002;
++
++	char tempBuf[1024];
++	char* cmd_string;
++
++	if (recovery_mode == RECOVERY_MAGIC) {
++		do_recovery = 1; /* perform recovery */
++	}
++
++	/* remove the poweroutage, powermode, adminmode and timeinc
++	 * strings, if they are already present in bootargs
++	 */
++
++	/* remove adminmode if present */
++	remove_string_from_bootargs("adminmode=");
++
++	/* remove time inc if present */
++	remove_string_from_bootargs("timeINC=");
++
++	/* remove poweroutage if present */
++	remove_string_from_bootargs("poweroutage=");
++
++	/* remove powermode if present */
++	remove_string_from_bootargs("powermode=");
++
++	/* End of String removal code */
++
++	cmd_string = strcpy(&tempBuf[0], getenv("bootargs"));
++
++	if (controlled_pd_mode == CONTROLLED_POWER_DOWN_MAGIC) {
++		/* System in controlled pwer down mode */
++		/* Read the SRAM location for normal boot flag */
++		char sram_data = *(volatile char*)(CFG_SRAM_BASE + CFG_SRAM_SIZE - POWER_ON_FLAG_SRAM_OFFSET);
++
++		if (sram_data == CONTROLLED_POWER_UP_MAGIC) {
++			/* The system is moving to power up state from power down state */
++			cmd_string = strcat(cmd_string, " powermode=controlledpup");
++			printf("Controlled Power UP requested\n");
++		} else {
++			/* The system has to remain in power down state */
++			/* power outage or hard reset: When system was powered down
++			 */
++			cmd_string = strcat(cmd_string, " powermode=controlledpdown poweroutage=yes");
++			printf("Controlled Power DOWN requested\n");
++		}
++
++		/* The leon time counter check is performed only when we reboot
++		 * from controlled power down mode
++		 */
++		#if (USE_LEON_TIME_COUNT == 1)
++		unsigned int ms_timeCount = *(volatile unsigned int*)(CFG_SRAM_BASE + CFG_SRAM_SIZE - MS_TIME_COUNT_SRAM_OFFSET);
++		if(ms_timeCount > 0) {
++			sprintf(cmd_string,"%s timeINC=%ld", cmd_string, ms_timeCount);
++		}
++		#endif
++	}
++	else {
++		/* power outage or hard reset: When system was up and running
++		 */
++		cmd_string = strcat(cmd_string, " poweroutage=yes");
++	}
++
++	setenv("bootargs", cmd_string);
++
++	/* branch off inot recovery or upadate */
++	if (upgrade_mode == UPGRADE_MAGIC) {
++		/* Script to select first disk */
++	        parse_string_outer("set select0 ide dev 0", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++	        /* Script to select second disk */
++	        parse_string_outer("set select1 ide dev 1", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++		/* Script for loading 256KB of upgrade rootfs image from hidden sectors */
++		parse_string_outer("set loadf ide read 48700000 4122 200", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++		/* Script for loading 2MB of upgrade kernel image from hidden sectors */
++		parse_string_outer("set loadk ide read 48800000 2122 1000", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++	        /* Script to light failure LED */
++		parse_string_outer("set lightled ledfail 1", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++	        /* Script to extinguish failure LED */
++	        parse_string_outer("set extinguishled ledfail 0", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++		/* Script for booting Linux kernel image with mkimage-wrapped initrd */
++	        parse_string_outer("set boot bootm 48800000 48700000", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++		/* Set Linux bootargs to use rootfs in initial ramdisk */
++	        parse_string_outer("set bootargs mem=32M console=ttyS0,115200 root=/dev/ram0", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++
++		/* Validate, load and boot the first validate set of initrd and kernel
++	           Theres alot of combos here due to disk/backup/fk arrangments, it'll
++	           no doubt work on the first or second one though. */
++		parse_string_outer("run          select0 loadf          loadk                boot || "
++			           "run lightled select1 loadf          loadk  extinguishled boot || "
++				   "run lightled select0 loadf  select1 loadk  extinguishled boot || "
++	                           "run lightled select1 loadf  select0 loadk  extinguishled boot || "
++						    "run lightled ", FLAG_PARSE_SEMICOLON | FLAG_EXIT_FROM_LOOP);
++	} else if (do_recovery) {
++		printf ("\nRecovery mode selected\n");
++
++		char tempBuf[1024];
++		char* cmd_string = strcpy(&tempBuf[0], getenv("bootargs"));
++		cmd_string = strcat(cmd_string, " adminmode=recovery");
++		setenv("bootargs", cmd_string);
++	}
++
++#endif // CONFIG_OXNAS
++
+ #ifdef CONFIG_PREBOOT
+ 	if ((p = getenv ("preboot")) != NULL) {
+ # ifdef CONFIG_AUTOBOOT_KEYED
+diff --git a/cpu/arm11/Makefile b/cpu/arm11/Makefile
+new file mode 100644
+index 0000000..203278e
+--- /dev/null
++++ b/cpu/arm11/Makefile
+@@ -0,0 +1,43 @@
++#
++# (C) Copyright 2000-2003
++# Wolfgang Denk, DENX Software Engineering, wd@denx.de.
++#
++# See file CREDITS for list of people who contributed to this
++# project.
++#
++# This program is free software; you can redistribute it and/or
++# modify it under the terms of the GNU General Public License as
++# published by the Free Software Foundation; either version 2 of
++# the License, or (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++# MA 02111-1307 USA
++#
++
++include $(TOPDIR)/config.mk
++
++LIB	= lib$(CPU).a
++
++START	= start.o
++OBJS	= interrupts.o cpu.o
++
++all:	.depend $(START) $(LIB)
++
++$(LIB):	$(OBJS)
++	$(AR) crv $@ $(OBJS)
++
++#########################################################################
++
++.depend:	Makefile $(START:.o=.S) $(OBJS:.o=.c)
++		$(CC) -M $(CFLAGS) $(START:.o=.S) $(OBJS:.o=.c) > $@
++
++sinclude .depend
++
++#########################################################################
+diff --git a/cpu/arm11/config.mk b/cpu/arm11/config.mk
+new file mode 100644
+index 0000000..a80784a
+--- /dev/null
++++ b/cpu/arm11/config.mk
+@@ -0,0 +1,25 @@
++#
++# (C) Copyright 2008 Oxford Semiconductor Ltd
++#
++# See file CREDITS for list of people who contributed to this
++# project.
++#
++# This program is free software; you can redistribute it and/or
++# modify it under the terms of the GNU General Public License as
++# published by the Free Software Foundation; either version 2 of
++# the License, or (at your option) any later version.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++#
++# You should have received a copy of the GNU General Public License
++# along with this program; if not, write to the Free Software
++# Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++# MA 02111-1307 USA
++#
++
++PLATFORM_RELFLAGS += -fno-strict-aliasing  -fno-common -ffixed-r8
++
++PLATFORM_CPPFLAGS += -march=armv6
+diff --git a/cpu/arm11/cpu.c b/cpu/arm11/cpu.c
+new file mode 100644
+index 0000000..6c153e5
+--- /dev/null
++++ b/cpu/arm11/cpu.c
+@@ -0,0 +1,157 @@
++/*
++ * (C) Copyright 2002
++ * Sysgo Real-Time Solutions, GmbH <www.elinos.com>
++ * Marius Groeger <mgroeger@sysgo.de>
++ *
++ * (C) Copyright 2002
++ * Gary Jennejohn, DENX Software Engineering, <gj@denx.de>
++ *
++ * See file CREDITS for list of people who contributed to this
++ * project.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++
++/*
++ * CPU specific code
++ */
++
++#include <common.h>
++#include <command.h>
++#include <arm926ejs.h>
++
++/* read co-processor 15, register #1 (control register) */
++static unsigned long read_p15_c1 (void)
++{
++	unsigned long value;
++
++	__asm__ __volatile__(
++		"mrc	p15, 0, %0, c1, c0, 0   @ read control reg\n"
++		: "=r" (value)
++		:
++		: "memory");
++
++#ifdef MMU_DEBUG
++	printf ("p15/c1 is = %08lx\n", value);
++#endif
++	return value;
++}
++
++/* write to co-processor 15, register #1 (control register) */
++static void write_p15_c1 (unsigned long value)
++{
++#ifdef MMU_DEBUG
++	printf ("write %08lx to p15/c1\n", value);
++#endif
++	__asm__ __volatile__(
++		"mcr	p15, 0, %0, c1, c0, 0   @ write it back\n"
++		:
++		: "r" (value)
++		: "memory");
++
++	read_p15_c1 ();
++}
++
++static void cp_delay (void)
++{
++	volatile int i;
++
++	/* Many OMAP regs need at least 2 nops  */
++	for (i = 0; i < 100; i++);
++}
++
++/* See also ARM Ref. Man. */
++#define C1_MMU		(1<<0)		/* mmu off/on */
++#define C1_ALIGN	(1<<1)		/* alignment faults off/on */
++#define C1_DC		(1<<2)		/* dcache off/on */
++#define C1_WB		(1<<3)		/* merging write buffer on/off */
++#define C1_BIG_ENDIAN	(1<<7)	/* big endian off/on */
++#define C1_SYS_PROT	(1<<8)		/* system protection */
++#define C1_ROM_PROT	(1<<9)		/* ROM protection */
++#define C1_IC		(1<<12)		/* icache off/on */
++#define C1_HIGH_VECTORS	(1<<13)	/* location of vectors: low/high addresses */
++#define RESERVED_1	(0xf << 3)	/* must be 111b for R/W */
++
++int cpu_init (void)
++{
++	/*
++	 * setup up stacks if necessary
++	 */
++#ifdef CONFIG_USE_IRQ
++	DECLARE_GLOBAL_DATA_PTR;
++
++	IRQ_STACK_START = _armboot_start - CFG_MALLOC_LEN - CFG_GBL_DATA_SIZE - 4;
++	FIQ_STACK_START = IRQ_STACK_START - CONFIG_STACKSIZE_IRQ;
++#endif
++	return 0;
++}
++
++int cleanup_before_linux (void)
++{
++	/*
++	 * this function is called just before we call linux
++	 * it prepares the processor for linux
++	 *
++	 * we turn off caches etc ...
++	 */
++
++	unsigned long i;
++
++	disable_interrupts ();
++
++	/* turn off I/D-cache */
++	asm ("mrc p15, 0, %0, c1, c0, 0":"=r" (i));
++	i &= ~(C1_DC | C1_IC);
++	asm ("mcr p15, 0, %0, c1, c0, 0": :"r" (i));
++
++	/* flush I/D-cache */
++	i = 0;
++	asm ("mcr p15, 0, %0, c7, c7, 0": :"r" (i));
++	return (0);
++}
++
++int do_reset (cmd_tbl_t *cmdtp, int flag, int argc, char *argv[])
++{
++	extern void reset_cpu (ulong addr);
++
++	disable_interrupts ();
++	reset_cpu (0);
++	/*NOTREACHED*/
++	return (0);
++}
++
++void icache_enable (void)
++{
++	ulong reg;
++
++	reg = read_p15_c1 ();		/* get control reg. */
++	cp_delay ();
++	write_p15_c1 (reg | C1_IC);
++}
++
++void icache_disable (void)
++{
++	ulong reg;
++
++	reg = read_p15_c1 ();
++	cp_delay ();
++	write_p15_c1 (reg & ~C1_IC);
++}
++
++int icache_status (void)
++{
++	return (read_p15_c1 () & C1_IC) != 0;
++}
+diff --git a/cpu/arm11/interrupts.c b/cpu/arm11/interrupts.c
+new file mode 100644
+index 0000000..746f93f
+--- /dev/null
++++ b/cpu/arm11/interrupts.c
+@@ -0,0 +1,330 @@
++/*
++ * (C) Copyright 2003
++ * Texas Instruments <www.ti.com>
++ *
++ * (C) Copyright 2002
++ * Sysgo Real-Time Solutions, GmbH <www.elinos.com>
++ * Marius Groeger <mgroeger@sysgo.de>
++ *
++ * (C) Copyright 2002
++ * Sysgo Real-Time Solutions, GmbH <www.elinos.com>
++ * Alex Zuepke <azu@sysgo.de>
++ *
++ * (C) Copyright 2002-2004
++ * Gary Jennejohn, DENX Software Engineering, <gj@denx.de>
++ *
++ * (C) Copyright 2004
++ * Philippe Robin, ARM Ltd. <philippe.robin@arm.com>
++ *
++ * See file CREDITS for list of people who contributed to this
++ * project.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++
++#include <common.h>
++#include <arm925t.h>
++
++#include <asm/proc-armv/ptrace.h>
++
++extern void reset_cpu(ulong addr);
++
++#ifdef CONFIG_OXNAS
++#define TIMER_LOAD_VAL 0xffffUL
++#else // CONFIG_OXNAS
++#define TIMER_LOAD_VAL 0xffffffff
++#endif // CONFIG_OXNAS
++
++/* macro to read the 32 bit timer */
++#ifdef CONFIG_OMAP
++#define READ_TIMER (*(volatile ulong *)(CFG_TIMERBASE+8))
++#endif
++#ifdef CONFIG_INTEGRATOR
++#define READ_TIMER (*(volatile ulong *)(CFG_TIMERBASE+4))
++#endif
++#ifdef CONFIG_VERSATILE
++#define READ_TIMER (*(volatile ulong *)(CFG_TIMERBASE+4))
++#endif
++#ifdef CONFIG_OXNAS
++#define READ_TIMER ((*(volatile ushort *)(CFG_TIMERBASE+4)) & 0xFFFFUL)  /* RPS timer value register has only 16 defined bits */
++#endif
++
++#ifdef CONFIG_USE_IRQ
++/* enable IRQ interrupts */
++void enable_interrupts (void)
++{
++	unsigned long temp;
++	__asm__ __volatile__("mrs %0, cpsr\n"
++			     "bic %0, %0, #0x80\n"
++			     "msr cpsr_c, %0"
++			     : "=r" (temp)
++			     :
++			     : "memory");
++}
++
++
++/*
++ * disable IRQ/FIQ interrupts
++ * returns true if interrupts had been enabled before we disabled them
++ */
++int disable_interrupts (void)
++{
++	unsigned long old,temp;
++	__asm__ __volatile__("mrs %0, cpsr\n"
++			     "orr %1, %0, #0xc0\n"
++			     "msr cpsr_c, %1"
++			     : "=r" (old), "=r" (temp)
++			     :
++			     : "memory");
++	return (old & 0x80) == 0;
++}
++#else
++void enable_interrupts (void)
++{
++	return;
++}
++int disable_interrupts (void)
++{
++	return 0;
++}
++#endif
++
++
++void bad_mode (void)
++{
++	panic ("Resetting CPU ...\n");
++	reset_cpu (0);
++}
++
++void show_regs (struct pt_regs *regs)
++{
++	unsigned long flags;
++	const char *processor_modes[] = {
++	"USER_26",	"FIQ_26",	"IRQ_26",	"SVC_26",
++	"UK4_26",	"UK5_26",	"UK6_26",	"UK7_26",
++	"UK8_26",	"UK9_26",	"UK10_26",	"UK11_26",
++	"UK12_26",	"UK13_26",	"UK14_26",	"UK15_26",
++	"USER_32",	"FIQ_32",	"IRQ_32",	"SVC_32",
++	"UK4_32",	"UK5_32",	"UK6_32",	"ABT_32",
++	"UK8_32",	"UK9_32",	"UK10_32",	"UND_32",
++	"UK12_32",	"UK13_32",	"UK14_32",	"SYS_32",
++	};
++
++	flags = condition_codes (regs);
++
++	printf ("pc : [<%08lx>]    lr : [<%08lx>]\n"
++		"sp : %08lx  ip : %08lx  fp : %08lx\n",
++		instruction_pointer (regs),
++		regs->ARM_lr, regs->ARM_sp, regs->ARM_ip, regs->ARM_fp);
++	printf ("r10: %08lx  r9 : %08lx  r8 : %08lx\n",
++		regs->ARM_r10, regs->ARM_r9, regs->ARM_r8);
++	printf ("r7 : %08lx  r6 : %08lx  r5 : %08lx  r4 : %08lx\n",
++		regs->ARM_r7, regs->ARM_r6, regs->ARM_r5, regs->ARM_r4);
++	printf ("r3 : %08lx  r2 : %08lx  r1 : %08lx  r0 : %08lx\n",
++		regs->ARM_r3, regs->ARM_r2, regs->ARM_r1, regs->ARM_r0);
++	printf ("Flags: %c%c%c%c",
++		flags & CC_N_BIT ? 'N' : 'n',
++		flags & CC_Z_BIT ? 'Z' : 'z',
++		flags & CC_C_BIT ? 'C' : 'c', flags & CC_V_BIT ? 'V' : 'v');
++	printf ("  IRQs %s  FIQs %s  Mode %s%s\n",
++		interrupts_enabled (regs) ? "on" : "off",
++		fast_interrupts_enabled (regs) ? "on" : "off",
++		processor_modes[processor_mode (regs)],
++		thumb_mode (regs) ? " (T)" : "");
++}
++
++void do_undefined_instruction (struct pt_regs *pt_regs)
++{
++	printf ("undefined instruction\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++void do_software_interrupt (struct pt_regs *pt_regs)
++{
++	printf ("software interrupt\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++void do_prefetch_abort (struct pt_regs *pt_regs)
++{
++	printf ("prefetch abort\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++void do_data_abort (struct pt_regs *pt_regs)
++{
++	printf ("data abort\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++void do_not_used (struct pt_regs *pt_regs)
++{
++	printf ("not used\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++void do_fiq (struct pt_regs *pt_regs)
++{
++	printf ("fast interrupt request\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++void do_irq (struct pt_regs *pt_regs)
++{
++	printf ("interrupt request\n");
++	show_regs (pt_regs);
++	bad_mode ();
++}
++
++static ulong timestamp;
++static ulong lastdec;
++
++/* nothing really to do with interrupts, just starts up a counter. */
++int interrupt_init (void)
++{
++#ifdef CONFIG_OXNAS
++    // Setup timer 1 load value
++    *(volatile ulong*)(CFG_TIMERBASE + 0) = TIMER_LOAD_VAL;
++
++    // Setup timer 1 prescaler, periodic operation and start it
++    *(volatile ulong*)(CFG_TIMERBASE + 8) =
++        (TIMER_PRESCALE_ENUM << TIMER_PRESCALE_BIT) |
++        (TIMER_MODE_PERIODIC << TIMER_MODE_BIT) |
++        (TIMER_ENABLE_ENABLE << TIMER_ENABLE_BIT);
++#endif	/* CONFIG_OXNAS */
++
++	/* init the timestamp and lastdec value */
++	reset_timer_masked();
++
++	return (0);
++}
++
++/*
++ * timer without interrupts
++ */
++
++void reset_timer (void)
++{
++	reset_timer_masked ();
++}
++
++ulong get_timer (ulong base)
++{
++	return get_timer_masked () - base;
++}
++
++void set_timer (ulong t)
++{
++	timestamp = t;
++}
++
++/* delay x useconds AND perserve advance timstamp value */
++void udelay (unsigned long usec)
++{
++	ulong tmo, tmp;
++
++	if(usec >= 1000){               /* if "big" number, spread normalization to seconds */
++		tmo = usec / 1000;      /* start to normalize for usec to ticks per sec */
++		tmo *= CFG_HZ;          /* find number of "ticks" to wait to achieve target */
++		tmo /= 1000;            /* finish normalize. */
++	}else{                          /* else small number, don't kill it prior to HZ multiply */
++		tmo = usec * CFG_HZ;
++		tmo /= (1000*1000);
++	}
++
++	tmp = get_timer (0);		/* get current timestamp */
++	if( (tmo + tmp + 1) < tmp ) 	/* if setting this fordward will roll time stamp */
++		reset_timer_masked ();	/* reset "advancing" timestamp to 0, set lastdec value */
++	else
++		tmo += tmp;		/* else, set advancing stamp wake up time */
++
++	while (get_timer_masked () < tmo)/* loop till event */
++		/*NOP*/;
++}
++
++void reset_timer_masked (void)
++{
++	/* reset time */
++	lastdec = READ_TIMER;  /* capure current decrementer value time */
++	timestamp = 0;         /* start "advancing" time stamp from 0 */
++}
++
++ulong get_timer_masked (void)
++{
++	ulong now = READ_TIMER;		/* current tick value */
++
++	if (lastdec >= now) {		/* normal mode (non roll) */
++		/* normal mode */
++		timestamp += lastdec - now; /* move stamp fordward with absoulte diff ticks */
++	} else {			/* we have overflow of the count down timer */
++		/* nts = ts + ld + (TLV - now)
++		 * ts=old stamp, ld=time that passed before passing through -1
++		 * (TLV-now) amount of time after passing though -1
++		 * nts = new "advancing time stamp"...it could also roll and cause problems.
++		 */
++		timestamp += lastdec + TIMER_LOAD_VAL - now;
++	}
++	lastdec = now;
++
++	return timestamp;
++}
++
++/* waits specified delay value and resets timestamp */
++void udelay_masked (unsigned long usec)
++{
++	ulong tmo;
++
++	if(usec >= 1000){               /* if "big" number, spread normalization to seconds */
++		tmo = usec / 1000;      /* start to normalize for usec to ticks per sec */
++		tmo *= CFG_HZ;          /* find number of "ticks" to wait to achieve target */
++		tmo /= 1000;            /* finish normalize. */
++	}else{                          /* else small number, don't kill it prior to HZ multiply */
++		tmo = usec * CFG_HZ;
++		tmo /= (1000*1000);
++	}
++
++	reset_timer_masked ();	/* set "advancing" timestamp to 0, set lastdec vaule */
++
++	while (get_timer_masked () < tmo) /* wait for time stamp to overtake tick number.*/
++		/*NOP*/;
++}
++
++/*
++ * This function is derived from PowerPC code (read timebase as long long).
++ * On ARM it just returns the timer value.
++ */
++unsigned long long get_ticks(void)
++{
++	return get_timer(0);
++}
++
++/*
++ * This function is derived from PowerPC code (timebase clock frequency).
++ * On ARM it returns the number of timer ticks per second.
++ */
++ulong get_tbclk (void)
++{
++	ulong tbclk;
++
++	tbclk = CFG_HZ;
++	return tbclk;
++}
+diff --git a/cpu/arm11/start.S b/cpu/arm11/start.S
+new file mode 100644
+index 0000000..ab1c443
+--- /dev/null
++++ b/cpu/arm11/start.S
+@@ -0,0 +1,420 @@
++/*
++ *  armboot - Startup Code for ARM11 CPU-core
++ *
++ *  Copyright (c) 2003  Texas Instruments
++ *
++ *  ----- Adapted for ARM11 from ARM926ejs code ------
++ *
++ *  Copyright (c) 2001	Marius Gr�ger <mag@sysgo.de>
++ *  Copyright (c) 2002	Alex Z�pke <azu@sysgo.de>
++ *  Copyright (c) 2002	Gary Jennejohn <gj@denx.de>
++ *  Copyright (c) 2003	Richard Woodruff <r-woodruff2@ti.com>
++ *  Copyright (c) 2003	Kshitij <kshitij@ti.com>
++ *
++ * See file CREDITS for list of people who contributed to this
++ * project.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++
++
++#include <config.h>
++#include <version.h>
++
++/*
++ *************************************************************************
++ *
++ * Jump vector table as in table 3.1 in [1]
++ *
++ *************************************************************************
++ */
++
++
++.globl _start
++_start:
++	b	reset
++	ldr	pc, _undefined_instruction
++	ldr	pc, _software_interrupt
++	ldr	pc, _prefetch_abort
++	ldr	pc, _data_abort
++	ldr	pc, _not_used
++	ldr	pc, _irq
++	ldr	pc, _fiq
++
++_undefined_instruction:
++	.word undefined_instruction
++_software_interrupt:
++	.word software_interrupt
++_prefetch_abort:
++	.word prefetch_abort
++_data_abort:
++	.word data_abort
++_not_used:
++	.word not_used
++_irq:
++	.word irq
++_fiq:
++	.word fiq
++
++	.balignl 16,0xdeadbeef
++
++
++/*
++ *************************************************************************
++ *
++ * Startup Code (reset vector)
++ *
++ * do important init only if we don't start from memory!
++ * setup Memory and board specific bits prior to relocation.
++ * relocate armboot to ram
++ * setup stack
++ *
++ *************************************************************************
++ */
++
++_TEXT_BASE:
++	.word	TEXT_BASE
++
++#ifdef CONFIG_OXNAS
++_EXCEPTION_BASE:
++	.word	EXCEPTION_BASE
++#endif
++
++.globl _armboot_start
++_armboot_start:
++	.word _start
++
++/*
++ * These are defined in the board-specific linker script.
++ */
++.globl _bss_start
++_bss_start:
++	.word __bss_start
++
++.globl _bss_end
++_bss_end:
++	.word _end
++
++#ifdef CONFIG_USE_IRQ
++/* IRQ stack memory (calculated at run-time) */
++.globl IRQ_STACK_START
++IRQ_STACK_START:
++	.word	0x0badc0de
++
++/* IRQ stack memory (calculated at run-time) */
++.globl FIQ_STACK_START
++FIQ_STACK_START:
++	.word 0x0badc0de
++#endif
++
++
++/*
++ * the actual reset code
++ */
++
++reset:
++	/*
++	 * set the cpu to SVC32 mode
++	 */
++	mrs	r0,cpsr
++	bic	r0,r0,#0x1f
++	orr	r0,r0,#0xd3
++	msr	cpsr,r0
++
++#ifdef CONFIG_OXNAS
++	/*
++	 * Copy exception table to relocated address in internal SRAM
++	 */
++	adr	r0, _start				/* Address of exception table in flash */
++	ldr	r1, _EXCEPTION_BASE		/* Relocated address of exception table */
++	ldmia	r0!, {r3-r10}		/* Copy exception table and jump values from */
++	stmia	r1!, {r3-r10}		/* FLASH to relocated address */
++	ldmia	r0!, {r3-r10}
++	stmia	r1!, {r3-r10}
++#endif
++
++	/*
++	 * we do sys-critical inits only at reboot,
++	 * not when booting from ram!
++	 */
++#ifdef CONFIG_INIT_CRITICAL
++	bl	cpu_init_crit
++#endif
++
++relocate:					/* relocate U-Boot to RAM */
++	adr	r0, _start			/* current position of code */
++	ldr	r1, _TEXT_BASE		/* relocated position of code */
++	cmp	r0, r1
++	beq	stack_setup
++
++	ldr	r2, _armboot_start
++	ldr	r3, _bss_start
++	sub	r2, r3, r2			/* r2 <- size of armboot */
++	add	r2, r0, r2			/* r2 <- source end address */
++
++copy_loop:
++	ldmia	r0!, {r3-r10}	/* copy from source address [r0] */
++	stmia	r1!, {r3-r10}	/* copy to   target address [r1] */
++	cmp	r0, r2				/* until source end addreee [r2] */
++	ble	copy_loop
++
++	/* Set up the stack						    */
++stack_setup:
++	ldr	r0, _TEXT_BASE		/* upper 128 KiB: relocated uboot   */
++	sub	r0, r0, #CFG_MALLOC_LEN	/* malloc area                      */
++	sub	r0, r0, #CFG_GBL_DATA_SIZE /* bdinfo                        */
++#ifdef CONFIG_USE_IRQ
++	sub	r0, r0, #(CONFIG_STACKSIZE_IRQ+CONFIG_STACKSIZE_FIQ)
++#endif
++	sub	sp, r0, #12		/* leave 3 words for abort-stack    */
++
++clear_bss:
++	ldr	r0, _bss_start		/* find start of bss segment        */
++	ldr	r1, _bss_end		/* stop here                        */
++	mov 	r2, #0x00000000		/* clear                            */
++
++clbss_l:str	r2, [r0]		/* clear loop...                    */
++	add	r0, r0, #4
++	cmp	r0, r1
++	bne	clbss_l
++
++	ldr	pc, _start_armboot
++
++_start_armboot:
++	.word start_armboot
++
++
++/*
++ *************************************************************************
++ *
++ * CPU_init_critical registers
++ *
++ * setup important registers
++ * setup memory timing
++ *
++ *************************************************************************
++ */
++
++
++cpu_init_crit:
++	/*
++	 * flush v4 I/D caches
++	 */
++	mov	r0, #0
++	mcr	p15, 0, r0, c7, c7, 0	/* flush v3/v4 cache */
++	mcr	p15, 0, r0, c8, c7, 0	/* flush v4 TLB */
++
++	/*
++	 * disable MMU stuff and caches
++	 */
++	mrc	p15, 0, r0, c1, c0, 0
++	bic	r0, r0, #0x00002B00	/* clear bits 13, 11, 9:8 (--V- Z-RS) */
++	bic	r0, r0, #0x00000086	/* clear bits 7, 2:0 (0--- -C-M) */
++	orr	r0, r0, #0x00000002	/* set bit 1 (A) Align */
++	orr	r0, r0, #0x00001000	/* set bit 12 (I) I-Cache */
++	mcr	p15, 0, r0, c1, c0, 0
++
++	/*
++	 * Go setup Memory and board specific bits prior to relocation.
++	 */
++	mov	ip, lr		/* perserve link reg across call */
++	bl	platformsetup	/* go setup pll,mux,memory */
++	mov	lr, ip		/* restore link */
++	mov	pc, lr		/* back to my caller */
++/*
++ *************************************************************************
++ *
++ * Interrupt handling
++ *
++ *************************************************************************
++ */
++
++@
++@ IRQ stack frame.
++@
++#define S_FRAME_SIZE	72
++
++#define S_OLD_R0	68
++#define S_PSR		64
++#define S_PC		60
++#define S_LR		56
++#define S_SP		52
++
++#define S_IP		48
++#define S_FP		44
++#define S_R10		40
++#define S_R9		36
++#define S_R8		32
++#define S_R7		28
++#define S_R6		24
++#define S_R5		20
++#define S_R4		16
++#define S_R3		12
++#define S_R2		8
++#define S_R1		4
++#define S_R0		0
++
++#define MODE_SVC 0x13
++#define I_BIT	 0x80
++
++/*
++ * use bad_save_user_regs for abort/prefetch/undef/swi ...
++ * use irq_save_user_regs / irq_restore_user_regs for IRQ/FIQ handling
++ */
++
++	.macro	bad_save_user_regs
++	@ carve out a frame on current user stack
++	sub	sp, sp, #S_FRAME_SIZE
++	stmia	sp, {r0 - r12}	@ Save user registers (now in svc mode) r0-r12
++
++	ldr	r2, _armboot_start
++	sub	r2, r2, #(CONFIG_STACKSIZE+CFG_MALLOC_LEN)
++	sub	r2, r2, #(CFG_GBL_DATA_SIZE+8)  @ set base 2 words into abort stack
++	@ get values for "aborted" pc and cpsr (into parm regs)
++	ldmia	r2, {r2 - r3}
++	add	r0, sp, #S_FRAME_SIZE		@ grab pointer to old stack
++	add	r5, sp, #S_SP
++	mov	r1, lr
++	stmia	r5, {r0 - r3}	@ save sp_SVC, lr_SVC, pc, cpsr
++	mov	r0, sp		@ save current stack into r0 (param register)
++	.endm
++
++	.macro	irq_save_user_regs
++	sub	sp, sp, #S_FRAME_SIZE
++	stmia	sp, {r0 - r12}			@ Calling r0-r12
++	@ !!!! R8 NEEDS to be saved !!!! a reserved stack spot would be good.
++	add	r8, sp, #S_PC
++	stmdb	r8, {sp, lr}^		@ Calling SP, LR
++	str	lr, [r8, #0]		@ Save calling PC
++	mrs	r6, spsr
++	str	r6, [r8, #4]		@ Save CPSR
++	str	r0, [r8, #8]		@ Save OLD_R0
++	mov	r0, sp
++	.endm
++
++	.macro	irq_restore_user_regs
++	ldmia	sp, {r0 - lr}^			@ Calling r0 - lr
++	mov	r0, r0
++	ldr	lr, [sp, #S_PC]			@ Get PC
++	add	sp, sp, #S_FRAME_SIZE
++	subs	pc, lr, #4		@ return & move spsr_svc into cpsr
++	.endm
++
++	.macro get_bad_stack
++	ldr	r13, _armboot_start		@ setup our mode stack
++	sub	r13, r13, #(CONFIG_STACKSIZE+CFG_MALLOC_LEN)
++	sub	r13, r13, #(CFG_GBL_DATA_SIZE+8) @ reserved a couple spots in abort stack
++
++	str	lr, [r13]	@ save caller lr in position 0 of saved stack
++	mrs	lr, spsr	@ get the spsr
++	str	lr, [r13, #4]	@ save spsr in position 1 of saved stack
++	mov	r13, #MODE_SVC	@ prepare SVC-Mode
++	@ msr	spsr_c, r13
++	msr	spsr, r13	@ switch modes, make sure moves will execute
++	mov	lr, pc		@ capture return pc
++	movs	pc, lr		@ jump to next instruction & switch modes.
++	.endm
++
++	.macro get_irq_stack			@ setup IRQ stack
++	ldr	sp, IRQ_STACK_START
++	.endm
++
++	.macro get_fiq_stack			@ setup FIQ stack
++	ldr	sp, FIQ_STACK_START
++	.endm
++
++/*
++ * exception handlers
++ */
++	.align  5
++undefined_instruction:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_undefined_instruction
++
++	.align	5
++software_interrupt:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_software_interrupt
++
++	.align	5
++prefetch_abort:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_prefetch_abort
++
++	.align	5
++data_abort:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_data_abort
++
++	.align	5
++not_used:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_not_used
++
++#ifdef CONFIG_USE_IRQ
++
++	.align	5
++irq:
++	get_irq_stack
++	irq_save_user_regs
++	bl 	do_irq
++	irq_restore_user_regs
++
++	.align	5
++fiq:
++	get_fiq_stack
++	/* someone ought to write a more effiction fiq_save_user_regs */
++	irq_save_user_regs
++	bl 	do_fiq
++	irq_restore_user_regs
++
++#else
++
++	.align	5
++irq:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_irq
++
++	.align	5
++fiq:
++	get_bad_stack
++	bad_save_user_regs
++	bl	do_fiq
++
++#endif
++
++#ifndef CONFIG_OXNAS
++	.align	5
++.globl reset_cpu
++reset_cpu:
++	ldr	r1, rstctl1	/* get clkm1 reset ctl */
++	mov	r3, #0x0
++	strh	r3, [r1]	/* clear it */
++	mov	r3, #0x8
++	strh	r3, [r1]	/* force dsp+arm reset */
++_loop_forever:
++	b	_loop_forever
++
++
++rstctl1:
++	.word	0xfffece10
++#endif // !CONFIG_OXNAS
+diff --git a/cpu/arm926ejs/config.mk b/cpu/arm926ejs/config.mk
+index cef7d26..ac4e6d7 100644
+--- a/cpu/arm926ejs/config.mk
++++ b/cpu/arm926ejs/config.mk
+@@ -21,7 +21,6 @@
+ # MA 02111-1307 USA
+ #
+ 
+-PLATFORM_RELFLAGS += -fno-strict-aliasing  -fno-common -ffixed-r8 \
+-	-mshort-load-bytes -msoft-float
++PLATFORM_RELFLAGS += -fno-strict-aliasing  -fno-common -ffixed-r8
+ 
+-PLATFORM_CPPFLAGS += -mapcs-32 -march=armv4
++PLATFORM_CPPFLAGS += -march=armv5te
+diff --git a/cpu/arm926ejs/interrupts.c b/cpu/arm926ejs/interrupts.c
+index 4fdac9f..7fe4caa 100644
+--- a/cpu/arm926ejs/interrupts.c
++++ b/cpu/arm926ejs/interrupts.c
+@@ -41,7 +41,12 @@
+ #include <asm/proc-armv/ptrace.h>
+ 
+ extern void reset_cpu(ulong addr);
++
++#ifdef CONFIG_OXNAS
++#define TIMER_LOAD_VAL 0xffffUL
++#else // CONFIG_OXNAS
+ #define TIMER_LOAD_VAL 0xffffffff
++#endif // CONFIG_OXNAS
+ 
+ /* macro to read the 32 bit timer */
+ #ifdef CONFIG_OMAP
+@@ -53,6 +58,9 @@ extern void reset_cpu(ulong addr);
+ #ifdef CONFIG_VERSATILE
+ #define READ_TIMER (*(volatile ulong *)(CFG_TIMERBASE+4))
+ #endif
++#ifdef CONFIG_OXNAS
++#define READ_TIMER ((*(volatile ushort *)(CFG_TIMERBASE+4)) & 0xFFFFUL)  /* RPS timer value register has only 16 defined bits */
++#endif
+ 
+ #ifdef CONFIG_USE_IRQ
+ /* enable IRQ interrupts */
+@@ -212,6 +220,16 @@ int interrupt_init (void)
+ 	*(volatile ulong *)(CFG_TIMERBASE + 4) = CFG_TIMER_RELOAD;	/* TimerValue */
+ 	*(volatile ulong *)(CFG_TIMERBASE + 8) = 0x8C;
+ #endif	/* CONFIG_VERSATILE */
++#ifdef CONFIG_OXNAS
++    // Setup timer 1 load value
++    *(volatile ulong*)(CFG_TIMERBASE + 0) = TIMER_LOAD_VAL;
++
++    // Setup timer 1 prescaler, periodic operation and start it
++    *(volatile ulong*)(CFG_TIMERBASE + 8) =
++        (TIMER_PRESCALE_ENUM << TIMER_PRESCALE_BIT) |
++        (TIMER_MODE_PERIODIC << TIMER_MODE_BIT) |
++        (TIMER_ENABLE_ENABLE << TIMER_ENABLE_BIT);
++#endif	/* CONFIG_OXNAS */
+ 
+ 	/* init the timestamp and lastdec value */
+ 	reset_timer_masked();
+diff --git a/cpu/arm926ejs/start.S b/cpu/arm926ejs/start.S
+index 70be4de..d9e0c06 100644
+--- a/cpu/arm926ejs/start.S
++++ b/cpu/arm926ejs/start.S
+@@ -94,6 +94,11 @@ _fiq:
+ _TEXT_BASE:
+ 	.word	TEXT_BASE
+ 
++#ifdef CONFIG_OXNAS
++_EXCEPTION_BASE:
++	.word	EXCEPTION_BASE
++#endif
++
+ .globl _armboot_start
+ _armboot_start:
+ 	.word _start
+@@ -135,6 +140,18 @@ reset:
+ 	orr	r0,r0,#0xd3
+ 	msr	cpsr,r0
+ 
++#ifdef CONFIG_OXNAS
++	/*
++	 * Copy exception table to relocated address in internal SRAM
++	 */
++	adr	r0, _start				/* Address of exception table in flash */
++	ldr	r1, _EXCEPTION_BASE		/* Relocated address of exception table */
++	ldmia	r0!, {r3-r10}		/* Copy exception table and jump values from */
++	stmia	r1!, {r3-r10}		/* FLASH to relocated address */
++	ldmia	r0!, {r3-r10}
++	stmia	r1!, {r3-r10}
++#endif
++
+ 	/*
+ 	 * we do sys-critical inits only at reboot,
+ 	 * not when booting from ram!
+@@ -143,21 +160,21 @@ reset:
+ 	bl	cpu_init_crit
+ #endif
+ 
+-relocate:				/* relocate U-Boot to RAM	    */
+-	adr	r0, _start		/* r0 <- current position of code   */
+-	ldr	r1, _TEXT_BASE		/* test if we run from flash or RAM */
+-	cmp     r0, r1                  /* don't reloc during debug         */
+-	beq     stack_setup
++relocate:					/* relocate U-Boot to RAM */
++	adr	r0, _start			/* current position of code */
++	ldr	r1, _TEXT_BASE		/* relocated position of code */
++	cmp	r0, r1
++	beq	stack_setup
+ 
+ 	ldr	r2, _armboot_start
+ 	ldr	r3, _bss_start
+-	sub	r2, r3, r2		/* r2 <- size of armboot            */
+-	add	r2, r0, r2		/* r2 <- source end address         */
++	sub	r2, r3, r2			/* r2 <- size of armboot */
++	add	r2, r0, r2			/* r2 <- source end address */
+ 
+ copy_loop:
+-	ldmia	r0!, {r3-r10}		/* copy from source address [r0]    */
+-	stmia	r1!, {r3-r10}		/* copy to   target address [r1]    */
+-	cmp	r0, r2			/* until source end addreee [r2]    */
++	ldmia	r0!, {r3-r10}	/* copy from source address [r0] */
++	stmia	r1!, {r3-r10}	/* copy to   target address [r1] */
++	cmp	r0, r2				/* until source end addreee [r2] */
+ 	ble	copy_loop
+ 
+ 	/* Set up the stack						    */
+@@ -212,7 +229,7 @@ cpu_init_crit:
+ 	mrc	p15, 0, r0, c1, c0, 0
+ 	bic	r0, r0, #0x00002300	/* clear bits 13, 9:8 (--V- --RS) */
+ 	bic	r0, r0, #0x00000087	/* clear bits 7, 2:0 (B--- -CAM) */
+-	orr	r0, r0, #0x00000002	/* set bit 2 (A) Align */
++	orr	r0, r0, #0x00000002	/* set bit 1 (A) Align */
+ 	orr	r0, r0, #0x00001000	/* set bit 12 (I) I-Cache */
+ 	mcr	p15, 0, r0, c1, c0, 0
+ 
+@@ -391,6 +408,7 @@ fiq:
+ 
+ #endif
+ 
++#ifndef CONFIG_OXNAS
+ 	.align	5
+ .globl reset_cpu
+ reset_cpu:
+@@ -405,3 +423,4 @@ _loop_forever:
+ 
+ rstctl1:
+ 	.word	0xfffece10
++#endif // !CONFIG_OXNAS
+diff --git a/drivers/cfi_flash.c b/drivers/cfi_flash.c
+index 4ced810..3bda33f 100644
+--- a/drivers/cfi_flash.c
++++ b/drivers/cfi_flash.c
+@@ -1056,7 +1056,11 @@ static ulong flash_get_size (ulong base, int banknum)
+ 			}
+ 			tmp = flash_read_long (info, 0,
+ 					       FLASH_OFFSET_ERASE_REGIONS +
++#ifdef FORCE_TOP_BOOT_FLASH
++					       (num_erase_regions - 1 - i) * 4);
++#else
+ 					       i * 4);
++#endif
+ 			erase_region_size =
+ 				(tmp & 0xffff) ? ((tmp & 0xffff) * 256) : 128;
+ 			tmp >>= 16;
+@@ -1104,6 +1108,7 @@ static int flash_write_cfiword (flash_info_t * info, ulong dest,
+ 	cfiptr_t ctladdr;
+ 	cfiptr_t cptr;
+ 	int flag;
++	ulong start;
+ 
+ 	ctladdr.cp = flash_make_addr (info, 0, 0);
+ 	cptr.cp = (uchar *) dest;
+@@ -1151,6 +1156,15 @@ static int flash_write_cfiword (flash_info_t * info, ulong dest,
+ 		break;
+ 	case FLASH_CFI_16BIT:
+ 		cptr.wp[0] = cword.w;
++		/* Wait for write to complete */
++		start = get_timer (0);
++		while (cptr.wp[0] != cword.w) {
++			printf(".");
++			if (get_timer (start) > info->erase_blk_tout * CFG_HZ) {
++				printf ("Flash write timeout!");;
++			}
++		}
++		printf("\n");
+ 		break;
+ 	case FLASH_CFI_32BIT:
+ 		cptr.lp[0] = cword.l;
+diff --git a/drivers/ns16550.c b/drivers/ns16550.c
+index f9fe819..05cd25b 100644
+--- a/drivers/ns16550.c
++++ b/drivers/ns16550.c
+@@ -14,8 +14,25 @@
+ #define MCRVAL (MCR_DTR | MCR_RTS)			/* RTS/DTR */
+ #define FCRVAL (FCR_FIFO_EN | FCR_RXSR | FCR_TXSR)	/* Clear & enable FIFOs */
+ 
++#ifdef USE_UART_FRACTIONAL_DIVIDER
++static int oxnas_fractional_divider(NS16550_t com_port, int baud_divisor)
++{
++	// Baud rate is passed around x16
++	int real_divisor = baud_divisor >> 4;
++	// Top three bits of 8-bit dlf register hold the number of eigths
++	// for the fractional part of the divide ratio
++	com_port->dlf = (unsigned char)(((baud_divisor - (real_divisor << 4)) << 4) & 0xFF);
++	// Return the x1 divider for the normal divider register
++	return real_divisor;
++}
++#endif // USE_UART_FRACTIONAL_DIVIDER
++
+ void NS16550_init (NS16550_t com_port, int baud_divisor)
+ {
++#ifdef USE_UART_FRACTIONAL_DIVIDER
++	baud_divisor = oxnas_fractional_divider(com_port, baud_divisor);
++#endif // USE_UART_FRACTIONAL_DIVIDER
++
+ 	com_port->ier = 0x00;
+ #ifdef CONFIG_OMAP1510
+ 	com_port->mdr1 = 0x7;	/* mode select reset TL16C750*/
+@@ -33,6 +50,10 @@ void NS16550_init (NS16550_t com_port, int baud_divisor)
+ 
+ void NS16550_reinit (NS16550_t com_port, int baud_divisor)
+ {
++#ifdef USE_UART_FRACTIONAL_DIVIDER
++	baud_divisor = oxnas_fractional_divider(com_port, baud_divisor);
++#endif // USE_UART_FRACTIONAL_DIVIDER
++
+ 	com_port->ier = 0x00;
+ 	com_port->lcr = LCR_BKSE;
+ 	com_port->dll = baud_divisor & 0xff;
+diff --git a/drivers/serial.c b/drivers/serial.c
+index f5b51d6..1066297 100644
+--- a/drivers/serial.c
++++ b/drivers/serial.c
+@@ -59,7 +59,13 @@ static int calc_divisor (void)
+ 		return (26);		/* return 26 for base divisor */
+ 	}
+ #endif
+-	return (CFG_NS16550_CLK / 16 / gd->baudrate);
++
++#ifdef USE_UART_FRACTIONAL_DIVIDER
++	return (((CFG_NS16550_CLK << 4) / gd->baudrate) + 8) >> 4;
++#endif // USE_UART_FRACTIONAL_DIVIDER
++
++    // Round to nearest integer
++    return (((CFG_NS16550_CLK / gd->baudrate) + 8 ) / 16);
+ }
+ 
+ int serial_init (void)
+diff --git a/examples/Makefile b/examples/Makefile
+index a12695b..b2b5787 100644
+--- a/examples/Makefile
++++ b/examples/Makefile
+@@ -30,7 +30,8 @@ LOAD_ADDR = 0x40000
+ endif
+ 
+ ifeq ($(ARCH),arm)
+-LOAD_ADDR = 0xc100000
++#LOAD_ADDR = 0xc100000
++LOAD_ADDR = 0x4C004000
+ endif
+ 
+ ifeq ($(ARCH),mips)
+@@ -58,6 +59,11 @@ include $(TOPDIR)/config.mk
+ SREC	= hello_world.srec
+ BIN	= hello_world.bin hello_world
+ 
++ifeq ($(ARCH),arm)
++SREC   += mem_test.srec
++BIN    += mem_test.bin mem_test
++endif
++
+ ifeq ($(ARCH),i386)
+ SREC   += 82559_eeprom.srec
+ BIN    += 82559_eeprom.bin 82559_eeprom
+@@ -115,10 +121,10 @@ $(LIB): .depend $(LIBOBJS)
+ 	$(LD) -g $(EX_LDFLAGS) -Ttext $(LOAD_ADDR) \
+ 		-o $@ -e $(<:.o=) $< $(LIB) \
+ 		-L$(gcclibdir) -lgcc
+-%.srec:	%
++%.srec:	%.o
+ 	$(OBJCOPY) -O srec $< $@ 2>/dev/null
+ 
+-%.bin:	%
++%.bin:	%.o
+ 	$(OBJCOPY) -O binary $< $@ 2>/dev/null
+ 
+ #########################################################################
+diff --git a/examples/mem_test.c b/examples/mem_test.c
+new file mode 100644
+index 0000000..575c9a8
+--- /dev/null
++++ b/examples/mem_test.c
+@@ -0,0 +1,1321 @@
++/*
++ * (C) Copyright 2006
++ * Oxford Semiconductor Ltd, www.oxsemi.com
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++
++/********************* OPTIONS ********************************************************/
++
++#define ARM
++/*
++#define QUIET
++#define SHORT
++*/
++
++/********************* TEST DEFINITIONS ********************************************************/
++
++
++#define NUM_PATTYPES 5
++#define PATTYPE_A5     0
++#define PATTYPE_5A     1
++#define PATTYPE_NO_FF  2
++#define PATTYPE_INCR   3
++#define PATTYPE_DECR   4
++
++/* Number of words in a block (to ensure that neither data not ~data is 0xFFxx) */
++
++#ifdef SHORT
++    #define BLOCKWORDS (254*4)
++    #define BLOCKSIZE  (256*4)
++#else
++    #define BLOCKWORDS (254*256*4)
++    #define BLOCKSIZE  (256*256*4)
++#endif
++
++#ifdef ARM
++    #include <common.h>
++    #include <exports.h>
++
++    #define SDRAM_BASE  0x48000000
++    #define SDRAM_TOP   0x49000000
++    #define SDRAM_BLOCK 0x10000
++//    #define SDRAM_WRITE(ADDR, DATA) printf("Write 0x%08x to 0x%08x\n", (DATA), (ADDR));
++//    #define SDRAM_READ(ADDR, VAR) printf("Read from 0x%08x\n", (ADDR));
++//    #define SDRAM_WRITE(ADDR, DATA) printf("Write 0x%08x to 0x%08x\n", (DATA), (ADDR)); (*((volatile unsigned int *)(ADDR)) = (DATA))
++//    #define SDRAM_READ(ADDR, VAR)  printf("Read from 0x%08x\n", (ADDR)); (*(VAR) = *((volatile unsigned int *)(ADDR)))
++    #define SDRAM_WRITE(ADDR, DATA) (*((volatile unsigned int *)(ADDR)) = (DATA))
++    #define SDRAM_READ(ADDR, VAR)  (*(VAR) = *((volatile unsigned int *)(ADDR)))
++#else
++    #include <stdio.h>
++    #include <stdlib.h>
++    /* Not so much space - just 2 blocks from addr 0... */
++    #define SDRAM_BASE  0
++    #define SDRAM_TOP   (2 * BLOCKSIZE)
++    #define SDRAM_BLOCK 0x10000
++    #ifdef QUIET
++        #define SDRAM_WRITE(ADDR, DATA)      array[ADDR] = (DATA)
++        #define SDRAM_READ(ADDR, VAR)        *((volatile unsigned int *)(VAR)) = array[ADDR]
++    #else
++        #define SDRAM_WRITE(ADDR, DATA)      printf("WRITE(%08x)=%08x\n", ADDR, DATA); array[ADDR] = (DATA)
++        #define SDRAM_READ(ADDR, VAR)        printf("READ (%08x)=%08x\n", ADDR, array[ADDR]); *((volatile unsigned int *)(VAR)) = array[ADDR]
++    #endif
++    unsigned volatile int array[SDRAM_TOP];
++#endif
++
++
++#define SYSCTRL_PRIMSEL_LO      0x4500000C
++#define SYSCTRL_SECSEL_LO       0x45000014
++#define SYSCTRL_TERSEL_LO       0x4500008C
++#define SYSCTRL_PRIMSEL_HI      0x45000010
++#define SYSCTRL_SECSEL_HI       0x45000018
++#define SYSCTRL_TERSEL_HI       0x45000090
++
++/* GPIO */
++#define GPIOB_IO_VAL       0x44100000
++#define GPIOB_OE_VAL       0x44100004
++#define GPIOB_SET_OE       0x4410001C
++#define GPIOB_CLEAR_OE     0x44100020
++#define GPIOB_OUTPUT_VAL   0x44100010
++#define GPIOB_SET_OUTPUT   0x44100014
++#define GPIOB_CLEAR_OUTPUT 0x44100018
++#define GPIOB_BIT_34       0x00000004
++
++void configure_caches(void);
++void report_err(unsigned int address, unsigned int bad_data, unsigned int correct_data, unsigned int iteration);
++
++/********************* TYPES.H ********************************************************/
++
++typedef unsigned int    UINT,  *PUINT;
++/*
++#ifndef __MY_BASIC_TYPES_H
++#define __MY_BASIC_TYPES_H
++
++typedef signed char     CHAR,  *PCHAR;
++typedef unsigned char   BYTE,   UCHAR,  *PBYTE, *PUCHAR;
++typedef signed short    SHORT, *PSHORT;
++typedef unsigned short  WORD,   USHORT, *PWORD, *PUSHORT;
++typedef signed long     LONG,  *PLONG;
++typedef unsigned long   DWORD, *PDWORD;
++typedef int             BOOL,  *PBOOL;
++typedef unsigned int    UINT,  *PUINT;
++typedef void            VOID,  *PVOID;
++
++typedef float           SINGLE,*PSINGLE;
++typedef double          DOUBLE,*PDOUBLE;
++
++
++#define FALSE 0
++#define TRUE  1
++
++#endif
++*/
++
++/********************* CHIP.H ********************************************************/
++
++// Address Map
++#define BOOT_ROM_BASE       0x00000000
++#define USBHS_BASE          0x00200000
++#define GMAC_BASE           0x00400000
++#define PCI_BASE            0x00600000
++#define PCI_DATA_BASE       0x00800000
++#define STATIC0_BASE        0x01000000
++#define STATIC1_BASE        0x01400000
++#define STATIC2_BASE        0x01800000
++#define STATIC_BASE         0x01C00000
++#define SATA_DATA_BASE      0x02000000
++#define DPE_DATA_BASE       0x03000000
++#define GPIOA_BASE          0x04000000
++#define GPIOB_BASE          0x04100000
++#define UARTA_BASE          0x04200000
++#define UARTB_BASE          0x04300000
++#define I2C_MASTER_BASE     0x04400000
++#define AUDIO_BASE          0x04500000
++#define FAN_BASE            0x04600000
++#define PWM_BASE            0x04700000
++#define IR_RX_BASE          0x04800000
++#define UARTC_BASE          0x04900000
++#define UARTD_BASE          0x04A00000
++#define SYS_CTRL_BASE       0x05000000
++#define RPSA_BASE           0x05300000
++#define  ARM_RPS_BASE  RPSA_BASE
++#define RPSC_BASE           0x05400000
++#define AHB_MON_BASE        0x05500000
++#define DMA_BASE            0x05600000
++#define DPE_BASE            0x05700000
++#define IBIW_BASE           0x05780000
++#define DDR_BASE            0x05800000
++#define SATA0_BASE          0x05900000
++#define SATA1_BASE          0x05980000
++#define DMA_CHKSUM_BASE     0x05A00000
++#define COPRO_BASE          0x05B00000
++#define SGDMA_BASE          0x05C00000
++#define DDR_DATA_BASE       0x08000000
++#define SRAM_BASE           0x0C000000
++#define SRAM0_BASE          0x0C000000
++#define SRAM1_BASE          0x0C002000
++#define SRAM2_BASE          0x0C004000
++#define SRAM3_BASE          0x0C006000
++
++// Virtual peripheral for TB sync
++#define TB_SYNC_BASE        0x05F00100
++
++
++/********************* DMA.H ********************************************************/
++
++
++// DMA Control register settings
++
++#define DMA_FAIR_SHARE                  (1<<0)
++#define DMA_IN_PROGRESS                 (1<<1)
++
++#define DMA_SDREQ_SATA                  (0<<2)
++#define DMA_SDREQ_DPE_OUT               (2<<2)
++#define DMA_SDREQ_UARTA_RX              (4<<2)
++#define DMA_SDREQ_AUDIO_RX              (6<<2)
++#define DMA_SDREQ_MEM                   (0xF<<2)
++
++#define DMA_DDREQ_SATA                  (0<<6)
++#define DMA_DDREQ_DPE_IN                (1<<6)
++#define DMA_DDREQ_UARTA_TX              (3<<6)
++#define DMA_DDREQ_AUDIO_TX              (5<<6)
++#define DMA_DDREQ_MEM                   (0xF<<6)
++
++#define DMA_INTERRUPT                   (1 << 10)
++#define DMA_NEXT_FREE                   (1 << 11)
++#define DMA_CH_RESET                    (1 << 12)
++
++#define DMA_DIR_ATOA                    (0 << 13)
++#define DMA_DIR_BTOA                    (1 << 13)
++#define DMA_DIR_ATOB                    (2 << 13)
++#define DMA_DIR_BTOB                    (3 << 13)
++
++#define DMA_BURST_A                     (1 << 17)
++#define DMA_BURST_B                     (1 << 18)
++
++#define DMA_SWIDTH_8                    (0 << 19)
++#define DMA_SWIDTH_16                   (1 << 19)
++#define DMA_SWIDTH_32                   (2 << 19)
++
++#define DMA_DWIDTH_8                    (0 << 22)
++#define DMA_DWIDTH_16                   (1 << 22)
++#define DMA_DWIDTH_32                   (2 << 22)
++
++#define DMA_PAUSE                       (1 << 25)
++#define DMA_INT_ENABLE                  (1 << 26)
++#define DMA_STARVE_LO_PRIORITY          (1 << 29)
++#define DMA_NEW_INT_CLEAR               (1 << 30)
++
++#define DMA_FIXED_SADDR                 ((0 << 15) | (1 << 27))
++#define DMA_INCR_SADDR                  ((1 << 15) | (0 << 27))
++#define DMA_SEMI_FIXED_SADDR            ((0 << 15) | (0 << 27))
++
++#define DMA_FIXED_DADDR                 ((0 << 16) | (1 << 28))
++#define DMA_INCR_DADDR                  ((1 << 16) | (0 << 28))
++#define DMA_SEMI_FIXED_DADDR            ((0 << 16) | (0 << 28))
++
++#define DMA_BASE_CTRL                   (DMA_BURST_A | DMA_BURST_B | DMA_INT_ENABLE | DMA_NEW_INT_CLEAR)
++
++// Common base setups
++
++#define DMA_CTRL_A32TOA32               ( DMA_BASE_CTRL | DMA_DIR_ATOA | DMA_SWIDTH_32 | DMA_DWIDTH_32 )
++#define DMA_CTRL_B32TOA32               ( DMA_BASE_CTRL | DMA_DIR_BTOA | DMA_SWIDTH_32 | DMA_DWIDTH_32 )
++#define DMA_CTRL_A32TOB32               ( DMA_BASE_CTRL | DMA_DIR_ATOB | DMA_SWIDTH_32 | DMA_DWIDTH_32 )
++#define DMA_CTRL_B32TOB32               ( DMA_BASE_CTRL | DMA_DIR_BTOB | DMA_SWIDTH_32 | DMA_DWIDTH_32 )
++
++#define DMA_CTRL_A8TOB32                ( DMA_BASE_CTRL | DMA_DIR_ATOB | DMA_SWIDTH_8  | DMA_DWIDTH_32 )
++#define DMA_CTRL_B32TOA8                ( DMA_BASE_CTRL | DMA_DIR_BTOA | DMA_SWIDTH_32 | DMA_DWIDTH_8  )
++#define DMA_CTRL_A32TOB8                ( DMA_BASE_CTRL | DMA_DIR_ATOB | DMA_SWIDTH_32 | DMA_DWIDTH_8  )
++
++// Most likely transactions
++
++#define DMA_CTRL_MEM_TO_MEM_AA          ( DMA_CTRL_A32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_MEM_AB          ( DMA_CTRL_A32TOB32 | DMA_SDREQ_MEM      | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_MEM_BB          ( DMA_CTRL_B32TOB32 | DMA_SDREQ_MEM      | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_MEM_BA          ( DMA_CTRL_B32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_MEM             ( DMA_CTRL_MEM_TO_MEM_AB )
++
++//DMA A-A
++#define DMA_CTRL_SATA_TO_MEM_AA         ( DMA_CTRL_A32TOA32 | DMA_SDREQ_SATA     | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_SATA_AA         ( DMA_CTRL_A32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_SATA     | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++
++#define DMA_CTRL_SATA_TO_MEM            ( DMA_CTRL_A32TOB32 | DMA_SDREQ_SATA     | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_SATA            ( DMA_CTRL_B32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_SATA     | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_SATA_TO_DPE            ( DMA_CTRL_A32TOA32 | DMA_SDREQ_SATA     | DMA_DDREQ_DPE_IN   | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_DPE_TO_SATA            ( DMA_CTRL_A32TOA32 | DMA_SDREQ_DPE_OUT  | DMA_DDREQ_SATA     | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_DPE             ( DMA_CTRL_B32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_DPE_IN   | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_DPE_TO_MEM             ( DMA_CTRL_A32TOB32 | DMA_SDREQ_DPE_OUT  | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_PCI_TO_MEM             ( DMA_CTRL_A32TOB32 | DMA_SDREQ_MEM      | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++
++#define DMA_CTRL_MEM_TO_PCI             ( DMA_CTRL_B32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_MEM      | DMA_INCR_SADDR       | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_AUDIO           ( DMA_CTRL_B32TOA32 | DMA_SDREQ_MEM      | DMA_DDREQ_AUDIO_TX | DMA_INCR_SADDR       | DMA_FIXED_DADDR )
++#define DMA_CTRL_AUDIO_TO_MEM           ( DMA_CTRL_A32TOB32 | DMA_SDREQ_AUDIO_RX | DMA_DDREQ_MEM      | DMA_FIXED_SADDR      | DMA_INCR_DADDR )
++#define DMA_CTRL_MEM_TO_UART            ( DMA_CTRL_B32TOA8  | DMA_SDREQ_MEM      | DMA_DDREQ_UARTA_TX | DMA_INCR_SADDR       | DMA_FIXED_DADDR )
++#define DMA_CTRL_UART_TO_MEM            ( DMA_CTRL_A8TOB32  | DMA_SDREQ_UARTA_RX | DMA_DDREQ_MEM      | DMA_FIXED_SADDR      | DMA_INCR_DADDR )
++
++// Byte count register flags
++
++#define DMA_HBURST_EN                   (1<<28)
++#define DMA_WR_BUFFERABLE               (1<<29)
++#define DMA_WR_EOT                      (1<<30)
++#define DMA_RD_EOT                      (1<<31)
++
++
++// Pause the DMA channel specified
++void PauseDMA( UINT channel );
++
++// UnPause the DMA channel specified
++void UnPauseDMA( UINT channel );
++
++// Configure a DMA
++void SetupDMA( UINT channel,
++               UINT src_addr,
++               UINT dest_addr,
++               UINT byte_count,
++               UINT control,
++               UINT flags );
++
++// Wait while the given DMA channel is busy
++void WaitWhileDMABusy( UINT channel );
++
++// Perform a memory to memory copy
++void DMAMemCopy ( UINT channel,
++                  UINT src_addr,
++                  UINT dest_addr,
++                  UINT byte_count );
++
++
++/****************************** MAIN ***********************************************/
++#ifdef ARM
++int mem_test(int argc, char* argv[])
++#else
++int main(int argc, char* argv[])
++#endif
++{
++    unsigned int i;
++    unsigned int iteration;
++    unsigned int block_base;
++    unsigned int datapattern;
++    unsigned int correct_data;
++    unsigned volatile int read_data;
++    unsigned int pattype, starting_pattype;
++    unsigned int end_addr;
++    unsigned int row, col, bank;
++
++#ifdef ARM
++    /* Print the ABI version */
++    app_startup(argv);
++    printf ("Example expects ABI version %d\n", XF_VERSION);
++    printf ("Actual U-Boot ABI version %d\n", (int)get_version());
++
++    printf("GPIO34 is output, low\n");
++    * (volatile unsigned int *) GPIOB_CLEAR_OUTPUT = GPIOB_BIT_34;
++    * (volatile unsigned int *) GPIOB_SET_OE       = GPIOB_BIT_34;
++#endif
++
++//    configure_caches();
++//printf("Caches enabled\n");
++
++    /* ******************************************************************* */
++    printf("DMA TEST.\n" );
++    /* ******************************************************************* */
++
++
++    #define DMA0_CTRL_STAT    0x45A00000
++    #define DMA0_SRC_BASE     0x45A00004
++    #define DMA0_DEST_BASE    0x45A00008
++    #define DMA0_BYTE_COUNT   0x45A0000C
++    #define DMA0_CURRENT_BYTE 0x45A00018
++
++    printf("Test to top of 1st SDRAM" );
++    #define BLOCK_BYTES 0x20000
++    #define SDRAM_STOP SDRAM_TOP
++
++    for (iteration=0; 1; iteration++) {
++
++        if ((iteration % 5)==0)
++            printf("Iteration %d\n", iteration );
++
++//        printf("Write pattern into first block.\n" );
++        end_addr = SDRAM_BASE + BLOCK_BYTES;
++        for (i=SDRAM_BASE; i < end_addr; i=i+4) {
++            SDRAM_WRITE( i, i);
++        }
++
++//        printf("Clear last block and a few blocks more - easy to see on LA.\n" );
++        end_addr = SDRAM_BASE + (BLOCK_BYTES << 3);
++        for (i=SDRAM_STOP - BLOCK_BYTES; i < end_addr; i=i+4) {
++            SDRAM_WRITE( i, 0);
++        }
++
++        end_addr = SDRAM_STOP - BLOCK_BYTES;
++        for (i=SDRAM_BASE; i < end_addr; i=i+BLOCK_BYTES) {
++
++//            printf("DMA transfer from %08x to %08x.\n", i, i + BLOCK_BYTES );
++#ifdef ARM
++            DMAMemCopy ( 0, i, i + BLOCK_BYTES, BLOCK_BYTES );
++#endif
++//            printf("...pending.\n" );
++#ifdef ARM
++            WaitWhileDMABusy( 0 );
++#endif
++//            printf("...complete.\n" );
++        }
++
++//        printf("Verify pattern in last block.\n" );
++        end_addr = SDRAM_STOP;
++        correct_data = SDRAM_BASE;
++        for (i=SDRAM_STOP - BLOCK_BYTES; i < end_addr; i=i+4) {
++            SDRAM_READ( i, &read_data);
++            if (read_data != correct_data)
++            {
++            /* Expand out the report_err function to avoid the stack operations. */
++            #ifdef ARM
++                /* ASSERT GPIO */
++                * (volatile unsigned int *) GPIOB_SET_OUTPUT = GPIOB_BIT_34;
++            #endif
++
++                /* REPORT ERROR */
++                printf("Wrong on [%08x]= %08x should be %08x on iteration %d\n", i, read_data, correct_data, iteration );
++
++                /* WRITE TO ANOTHER LOCATION */
++                SDRAM_WRITE(SDRAM_BASE, 0xFFFFFFFF);
++
++                /* READ AGAIN */
++                SDRAM_READ(i, &read_data);
++                if (read_data != correct_data)
++                    printf("Again 1  [%08x]= %08x should be %08x\n", i, read_data, correct_data );
++
++                /* WRITE TO ANOTHER LOCATION */
++                SDRAM_WRITE(SDRAM_BASE, 0xFFFFFFFF);
++
++                /* READ AGAIN */
++                SDRAM_READ(i, &read_data);
++                if (read_data != correct_data)
++                    printf("Again 2  [%08x]= %08x should be %08x\n", i, read_data, correct_data );
++
++                /* WRITE TO ANOTHER LOCATION */
++                SDRAM_WRITE(SDRAM_BASE, 0xFFFFFFFF);
++
++                /* READ AGAIN */
++                SDRAM_READ(i, &read_data);
++                if (read_data != correct_data)
++                    printf("Again 3  [%08x]= %08x should be %08x\n", i, read_data, correct_data );
++
++                row = (((i >> 26) & 0x1) << 13) | (((i >> 23) & 0x3) << 11) | ((i >> 10) & 0x7FF); /* [26], [24:23], [20:10]*/
++                col = (((i >> 27) & 0x1) << 10) | (((i >> 25) & 0x1) << 9) | (((i >> 22) & 0x1) << 8); /* [27], [25], [22]... */
++                col |= (((i >> 6) & 0xF) << 4) | (((i >> 21) & 0x1) << 3) | (((i >> 1) & 0x3) << 1); /* ...[9:8], [21], [3:2], '0' */
++                col |= 0x800; /* bit 11 set for auto-precharge */
++                bank = (i >> 4) & 0x3; /* [5:4] */
++                printf("Bank   %08x\n", bank );
++                printf("Row    %08x\n", row );
++                printf("Column %08x\n", col );
++            #ifdef ARM
++                /* DEASSERT GPIO */
++                * (volatile unsigned int *) GPIOB_CLEAR_OUTPUT = GPIOB_BIT_34;
++            #endif
++            }
++
++
++            correct_data += 4;
++        }
++    }
++
++
++    /* ******************************************************************* */
++    printf("MEM_TEST2\n");
++    /* ******************************************************************* */
++
++
++    pattype=0;
++    iteration=0;
++
++    for (;;) {
++        /* FOR EACH 64Kword==256KB BLOCK IN 16Mword=64MB (2 OFF 16M16) MEMORY... */
++
++#ifdef SHORT
++        if ((iteration % 5)==0)
++            printf("Iteration %d\n", iteration );
++#else
++        if ((iteration % 1000)==0)
++            printf("Iteration %d\n", iteration );
++#endif
++
++        /* WRITE DATA BLOCKS */
++        starting_pattype = pattype; /* Record for later */
++
++        for (block_base=SDRAM_BASE; block_base < SDRAM_TOP; block_base=block_base + BLOCKSIZE) {
++	    switch (pattype) {
++	    case PATTYPE_A5 :
++                /* Write alternating 1s and 0s... */
++                end_addr = block_base + BLOCKWORDS;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_WRITE( i, 0xaa55aa55);
++                }
++                break;
++	    case PATTYPE_5A :
++                /* Write alternating 1s and 0s (inverse of above)... */
++                end_addr = block_base + BLOCKWORDS;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_WRITE( i, 0x55aa55aa);
++                }
++                break;
++	    case PATTYPE_NO_FF :
++                /* Write data=address with bit[n+16]=~bit[n]... */
++                datapattern = 0x0100FEFF;
++                /* In range 0x0100...0xFEFF so that
++                    a. temp[15:8] is never 0xFF
++                    b. Inverse of temp[15:8] is never 0xFF
++                */
++                end_addr = block_base + BLOCKWORDS;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_WRITE( i, datapattern);
++                    datapattern = datapattern + 0xFFFF;
++                }
++                break;
++	    case PATTYPE_INCR :
++                /* Write data=address... */
++                end_addr = block_base + BLOCKSIZE;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_WRITE( i, i);
++                }
++                break;
++	    case PATTYPE_DECR :
++                /* Write data=~address... */
++                end_addr = block_base + BLOCKSIZE;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_WRITE( i, ~i);
++                }
++                break;
++            }
++        }
++
++        /* VERIFY DATA BLOCKS */
++        pattype = starting_pattype; /* Reset to same as for writes */
++
++        for (block_base=SDRAM_BASE; block_base < SDRAM_TOP; block_base=block_base + BLOCKSIZE) {
++	    switch (pattype) {
++	    case PATTYPE_A5 :
++                correct_data = 0xaa55aa55;
++                end_addr = block_base + BLOCKWORDS;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_READ( i, &read_data);
++                    if (read_data != correct_data)
++                        report_err(i, read_data, correct_data, iteration);
++                }
++                break;
++	    case PATTYPE_5A :
++                correct_data = 0x55aa55aa;
++                end_addr = block_base + BLOCKWORDS;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_READ( i, &read_data);
++                    if (read_data != correct_data)
++                        report_err(i, read_data, correct_data, iteration);
++                }
++                break;
++	    case PATTYPE_NO_FF :
++                correct_data = 0x0100FEFF;
++                end_addr = block_base + BLOCKWORDS;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_READ( i, &read_data);
++                    if (read_data != correct_data)
++                        report_err(i, read_data, correct_data, iteration);
++                    correct_data = correct_data + 0xFFFF;
++                }
++                break;
++	    case PATTYPE_INCR :
++                end_addr = block_base + BLOCKSIZE;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_READ( i, &read_data);
++                    if (read_data != i)
++                        report_err(i, read_data, i, iteration);
++                }
++                break;
++	    case PATTYPE_DECR :
++                end_addr = block_base + BLOCKSIZE;
++                for (i=block_base; i < end_addr; i=i+4) {
++                    SDRAM_READ( i, &read_data);
++                    if (read_data != ~i)
++                        report_err(i, read_data, ~i, iteration);
++                }
++                break;
++            }
++        }
++
++	pattype = pattype + 1;
++	if (pattype >= NUM_PATTYPES) { pattype = 0; }
++        ++iteration;
++    }
++
++    return 0;
++}
++
++/********************* REPORT ERROR FUNC ********************************************************/
++
++void report_err(unsigned int address, unsigned int bad_data, unsigned int correct_data, unsigned int iteration)
++{
++    volatile unsigned int readvalue;
++
++#ifdef ARM
++    /* ASSERT GPIO */
++    * (volatile unsigned int *) GPIOB_SET_OUTPUT = GPIOB_BIT_34;
++#endif
++
++    /* REPORT ERROR */
++    printf("Wrong on [%08x]= %08x should be %08x on iteration %d\n", address, bad_data, correct_data, iteration );
++
++    /* WRITE TO ANOTHER LOCATION */
++    SDRAM_WRITE(SDRAM_BASE, 0xFFFFFFFF);
++
++    /* READ AGAIN */
++    SDRAM_READ(address, &readvalue);
++    if (readvalue != correct_data)
++        printf("Again 1  [%08x]= %08x should be %08x\n", address, readvalue, correct_data );
++
++    /* WRITE TO ANOTHER LOCATION */
++    SDRAM_WRITE(SDRAM_BASE, 0xFFFFFFFF);
++
++    /* READ AGAIN */
++    SDRAM_READ(address, &readvalue);
++    if (readvalue != correct_data)
++        printf("Again 2  [%08x]= %08x should be %08x\n", address, readvalue, correct_data );
++
++    /* WRITE TO ANOTHER LOCATION */
++    SDRAM_WRITE(SDRAM_BASE, 0xFFFFFFFF);
++
++    /* READ AGAIN */
++    SDRAM_READ(address, &readvalue);
++    if (readvalue != correct_data)
++        printf("Again 3  [%08x]= %08x should be %08x\n", address, readvalue, correct_data );
++
++#ifdef ARM
++    /* DEASSERT GPIO */
++    * (volatile unsigned int *) GPIOB_CLEAR_OUTPUT = GPIOB_BIT_34;
++#endif
++
++} /* end of report_err */
++
++
++
++
++/********************* DMA.C FUNCTIONS ********************************************************/
++
++void ResetDMA( UINT channel ) {
++
++    // Clear and abort the dma channel
++
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++    dma[0] =  (1 << 12);
++    dma[0] &=  ~(1 << 12);
++}
++
++
++
++
++void PauseDMA( UINT channel ) {
++
++    // Pause the DMA channel specified
++
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++    UINT  rd;
++
++    rd = dma[0];
++
++    rd |= DMA_PAUSE;
++
++    dma[0] = rd;
++}
++
++
++
++
++void UnPauseDMA( UINT channel ) {
++
++    // UnPause the DMA channel specified
++
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++    UINT  rd;
++
++    rd = dma[0];
++
++    rd &= ~DMA_PAUSE;
++
++    dma[0] = rd;
++}
++
++
++
++
++void SetupDMA( UINT channel,
++               UINT src_addr,
++               UINT dest_addr,
++               UINT byte_count,
++               UINT control,
++               UINT flags ) {
++
++    // Configure a DMA
++
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++
++    dma[0] = control;
++    dma[1] = src_addr;
++    dma[2] = dest_addr;
++    dma[3] = byte_count | (flags & 0xF0000000);
++}
++
++// EXAMPLE:
++//
++// DMA 2kB from SRAM to SATA core with a write EOT set, and HBURST enabled, using DMA channel 2
++// Then wait for the DMA to complete
++//
++//   SetupDMA ( 2 , 0x4C001100, BASE_SATA, 2048, DMA_CTRL_MEM_TO_SATA, WR_EOT | DMA_HBURST_EN );
++//   WaitWhileDMABusy( 2 );
++
++int DMABusy(UINT channel)
++{
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++    return (dma[0] & DMA_IN_PROGRESS ? 1 : 0);
++}
++
++
++void WaitWhileDMABusy( UINT channel ) // Wait while the given DMA channel is busy
++{
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++    while (dma[0] & DMA_IN_PROGRESS) ; // Do Nothing
++}
++
++void DMAClearIRQ(UINT channel)
++{
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++    dma[4] = 1; // write any value to offset 0x10 (16 / 4 => 4)
++
++}
++
++void DMAMemCopy ( UINT channel,
++                  UINT src_addr,
++                  UINT dest_addr,
++                  UINT byte_count ) {
++
++    // Perform a memory to memory copy
++
++    volatile PUINT dma = (PUINT) (DMA_BASE + (channel << 5));
++
++    // Choose fastest configuration possible for required transfer
++
++    if (src_addr < SRAM_BASE) {
++        if (dest_addr < SRAM_BASE) {
++            dma[0] = DMA_CTRL_MEM_TO_MEM_AA; // Src and Dest must use A
++        } else {
++            dma[0] = DMA_CTRL_MEM_TO_MEM_AB; // Src must use A
++        }
++    } else {
++        if (dest_addr < SRAM_BASE) {
++            dma[0] = DMA_CTRL_MEM_TO_MEM_BA; // Dest must use A
++        } else {
++            dma[0] = DMA_CTRL_MEM_TO_MEM_AB; // No restriction
++        }
++    }
++
++    dma[1] = src_addr;
++    dma[2] = dest_addr;
++    dma[3] = byte_count | DMA_WR_BUFFERABLE | DMA_HBURST_EN;
++
++    WaitWhileDMABusy( channel );
++}
++
++
++
++
++
++
++
++#define CP15R1_M_ENABLE 0x0001 // MMU Enable
++#define CP15R1_A_ENABLE 0x0002 // Address alignment fault enable
++#define CP15R1_C_ENABLE 0x0004 // (data) cache enable
++#define CP15R1_W_ENABLE 0x0008 // write buffer enable
++#define CP15R1_PROG32   0x0010 // PROG32
++#define CP15R1_DATA32   0x0020 // DATA32
++#define CP15R1_L_ENABLE 0x0040 // Late abort on earlier CPUs
++#define CP15R1_BIGEND   0x0080 // Big-endian (=1), little-endian (=0)
++#define CP15R1_SYSTEM   0x0100 // System bit, modifies MMU protections
++#define CP15R1_ROM      0x0200 // ROM bit, modifies MMU protections
++#define CP15R1_F        0x0400 // Should Be Zero
++#define CP15R1_Z_ENABLE 0x0800 // Branch prediction enable on 810
++#define CP15R1_I_ENABLE 0x1000 // Instruction cache enable
++#define CP15R1_RESERVED 0x00000078
++#define CP15R2_RESERVED 0xFFFFC000
++
++#define NUM_DOMAINS 16
++
++#define DAV_NO_ACCESS 0
++#define DAV_CLIENT    1
++#define DAV_RESERVED  2
++#define DAV_MANAGER   3
++#define NUM_DOMAIN_ACCESS_VALUES 4
++
++#define AP_LEVEL_0 0
++#define AP_LEVEL_1 0
++#define AP_LEVEL_2 0
++#define AP_LEVEL_3 0
++#define NUM_ACCESS_PERMISSIONS 4
++
++#define FAULT_ID 0
++
++#define FLD_COURSE_ID  1
++#define FLD_SECTION_ID 2
++#define FLD_FINE_ID    3
++
++#define FD_USER_DATA_BIT 2
++
++#define FD_USER_DATA_NUM_BITS 30
++
++#define SD_BUFFERABLE_BIT 2
++#define SD_CACHEABLE_BIT  3
++#define SD_IMP_BIT        4
++#define SD_DOMAIN_BIT     5
++#define SD_AP_BIT         10
++#define SD_ADDRESS_BIT    20
++
++#define SD_DOMAIN_NUM_BITS  4
++#define SD_AP_NUM_BITS      2
++
++void CoPro15Regs_SetCP15Reg1(const unsigned long mask) {
++    asm volatile(
++        "MOV  r0, %0;"
++        "MRC  p15, 0, r1, c1, c0, 0;"
++        "ORR  r1,r1,r0;"
++        "MCR  p15, 0, r1, c1, c0, 0;"
++        :
++        : "r" (mask | CP15R1_RESERVED)
++        : "r0","r1");
++}
++
++void CoPro15Regs_ClearCP15Reg1(const unsigned long mask) {
++    asm volatile(
++        "MOV  r0, %0;"
++        "MRC  p15, 0, r1, c1, c0, 0;"
++        "BIC  r1,r1,r0;"
++        "MCR  p15, 0, r1, c1, c0, 0;"
++        :
++        : "r" (mask)
++        : "r0","r1");
++}
++
++unsigned long CoPro15Regs_GetCP15Reg1(const unsigned long mask) {
++    unsigned long value;
++    asm volatile(
++        "MRC  p15, 0, r1, c1, c0, 0;"
++        "MOV  r0, %1;"
++        "BIC  %0,r1,r0; "
++        : "=r" (value)
++        : "r" (mask)
++        : "r0","r1");
++    return value;
++}
++
++unsigned long CoPro15Regs_GetCP15Reg2(void) {
++    unsigned long value;
++    asm volatile(
++        "MRC  p15, 0, r0, c2, c0, 0;"
++        "MOV  %0, r0;"
++        : "=r" (value)
++        :
++        : "r0");
++    return value & CP15R2_RESERVED;
++}
++
++unsigned long CoPro15Regs_GetCP15Reg3(void) {
++    unsigned long value;
++    asm volatile(
++        "MRC  p15, 0, r0, c3, c0, 0;"
++        "MOV  %0, r0;"
++        : "=r" (value)
++        :
++        : "r0");
++    return value;
++}
++
++void CoPro15Regs_SetCP15Reg3(unsigned long value) {
++    asm volatile(
++        "MOV  r0, %0;"
++        "MCR  p15, 0, r0, c3, c0, 0;"
++        :
++        : "r" (value)
++        : "r0");
++}
++
++void CoPro15Regs_SetCP15Reg2(unsigned long value) {
++    asm volatile(
++        "MOV  r0, %0;"
++        "MCR  p15, 0, r0, c2, c0, 0;"
++        :
++        : "r" (value & CP15R2_RESERVED)
++        : "r0");
++}
++
++void Cache_CleanDataCache(void)
++{
++    // Clean the data cache - usually precedes a data cache invalidation.
++    // Forces the data cache content to be written to main memory - only
++    // required if using write-back data cache
++    asm volatile(
++        "MOV  r3,pc;"
++        "LDR  r1, =0;"
++        "  MOV  r4,pc;"
++        "  LDR  r0, =0;"
++        "    ORR  r2, r1, r0;"
++        "    MCR  p15, 0, r2, c7, c10, 2 ;"     // I (BHC) think that this should be c10, 2 not c14, 1 -- See ARM ARM
++        "    ADD  r0, r0, #0x10;"
++        "    CMP  r0,#0x40;"
++        "  BXNE  r4;"
++        "  ADD  r1, r1, #0x04000000;"
++        "  CMP  r1, #0x0;"
++        "BXNE  r3;"
++        :
++        :
++        : "r0","r1","r2","r3","r4");
++}
++
++void Cache_DrainWriteBuffer(void)
++{
++    // Forces the write buffer to update to main memory
++    asm volatile(
++        "LDR  r1, =0;"
++        "MCR  p15, 0, r1, c7, c10, 4 ;"
++        :
++        :
++        : "r1");
++}
++
++void Cache_FlushPrefetchBuffer(void)
++{
++    // Forces the CPU to flush the instruction prefetch buffer
++    asm volatile(
++        "LDR  r1, =0;"
++        "MCR  p15, 0, r1, c7, c5, 4 ;"
++        :
++        :
++        : "r1");
++}
++
++void Cache_InvalidateDataCache(void)
++{
++    asm volatile(
++        "LDR  r1, =0;"
++        "MCR  p15, 0, r1, c7, c6, 0;"
++        :
++        :
++        : "r1");
++}
++
++void Cache_InvalidateInstructionCache(void)
++{
++    asm volatile(
++        "LDR  r1, =0;"
++        "MCR  p15, 0, r1, c7, c5, 0;"
++        :
++        :
++        : "r1");
++}
++
++void Cache_InstOn(void)
++{
++    // Invalidate the instruction cache, in case there's anything
++    // left from when it was last enabled
++    Cache_InvalidateInstructionCache();
++
++    // Enable the instruction cache
++    CoPro15Regs_SetCP15Reg1(CP15R1_I_ENABLE);
++}
++
++void Cache_InstOff(void)
++{
++    // Disable the instruction cache
++    CoPro15Regs_ClearCP15Reg1(CP15R1_I_ENABLE);
++}
++
++void Cache_DataOn(void)
++{
++    // Invalidate the data cache, in case there's anything left from when
++    // it was last enabled
++    Cache_InvalidateDataCache();
++
++    // Enable the data cache
++    CoPro15Regs_SetCP15Reg1(CP15R1_C_ENABLE);
++}
++
++void Cache_DataOff(void)
++{
++    // Ensure all data in data cache or write buffer is written to memory
++    Cache_CleanDataCache();
++    Cache_DrainWriteBuffer();
++
++    // Disable the data cache
++    CoPro15Regs_ClearCP15Reg1(CP15R1_C_ENABLE);
++}
++
++void Cache_WriteBufferOn(void)
++{
++    // Enable the write buffer
++    CoPro15Regs_SetCP15Reg1(CP15R1_W_ENABLE);
++}
++
++void Cache_WriteBufferOff(void)
++{
++    // Ensure all data in the write buffer is written to memory
++    Cache_DrainWriteBuffer();
++
++    // Disable the write buffer
++    CoPro15Regs_ClearCP15Reg1(CP15R1_W_ENABLE);
++}
++
++int MMU_SetDomainAccessValue(
++    int domainNumber,
++    int value) {
++    int status = 0;
++    if ((value < NUM_DOMAIN_ACCESS_VALUES) && (domainNumber < NUM_DOMAINS))
++    {
++        // Insert the 2-bit domain field into the slot for the specified domain
++        unsigned long registerContents = CoPro15Regs_GetCP15Reg3();
++        registerContents &= ~(3UL << (2*domainNumber));
++        registerContents |= ((unsigned long)value << (2*domainNumber));
++        CoPro15Regs_SetCP15Reg3(registerContents);
++        status = 1;
++    }
++    return status;
++}
++
++void MMU_SetAlignmentChecked(int alignmentChecked) {
++    alignmentChecked ? CoPro15Regs_SetCP15Reg1(CP15R1_A_ENABLE) : CoPro15Regs_ClearCP15Reg1(CP15R1_A_ENABLE);
++}
++
++void MMU_SetEnabled(int enabled) {
++    enabled ? CoPro15Regs_SetCP15Reg1(CP15R1_M_ENABLE) : CoPro15Regs_ClearCP15Reg1(CP15R1_M_ENABLE);
++}
++void MMU_InvalidateDataTLB(void)
++{
++    asm volatile(
++        "MCR  p15, 0, r0, c8, c6, 0;"
++        :
++        :
++        : "r0");
++}
++
++void MMU_InvalidateInstructionTLB(void)
++{
++    asm volatile(
++        "MCR  p15, 0, r0, c8, c5, 0;"
++        :
++        :
++        : "r0");
++}
++
++void MMU_SetROMPermission(int rOM_Permitted) {
++    rOM_Permitted ? CoPro15Regs_SetCP15Reg1(CP15R1_ROM) : CoPro15Regs_ClearCP15Reg1(CP15R1_ROM);
++}
++
++void MMU_SetSystemPermission(int systemPermitted) {
++    systemPermitted ? CoPro15Regs_SetCP15Reg1(CP15R1_SYSTEM) : CoPro15Regs_ClearCP15Reg1(CP15R1_SYSTEM);
++}
++
++void MMU_SetTranslationTableBaseAddress(unsigned long *baseAddress) {
++    CoPro15Regs_SetCP15Reg2((unsigned long)baseAddress);
++}
++
++unsigned long SetBit(
++    unsigned long source,
++    int           state,
++    int           offset)
++{
++    source = state ? (source | (1UL << offset)) :
++                     (source & ~(1UL << offset));
++    return source;
++}
++
++unsigned long SetField(
++    unsigned long source,
++    unsigned long newFieldContents,
++    int           offset,
++    int           length)
++{
++    unsigned long mask = (1UL << length) - 1;
++    source &= ~(mask << offset);
++    source |= ((newFieldContents & mask) << offset);
++    return source;
++}
++
++unsigned long FD_SetUserData(
++    unsigned long userData,
++    unsigned long descriptor)
++{
++    return SetField(descriptor, userData, FD_USER_DATA_BIT, FD_USER_DATA_NUM_BITS);
++}
++
++unsigned long FLPT_CreateFaultDescriptor(unsigned long userData)
++{
++    unsigned long descriptor = FAULT_ID;
++    descriptor = FD_SetUserData(userData, descriptor);
++    return descriptor;
++}
++
++void FLPT_InsertFaultDescriptor(
++    unsigned long *tableBaseAdr,
++    int            index,
++    unsigned long  descriptor)
++{
++    *(tableBaseAdr + index) = descriptor;
++}
++
++unsigned long SD_SetAccessPermission(
++    int           ap,
++    unsigned long descriptor)
++{
++    return SetField(descriptor, ap, SD_AP_BIT, SD_AP_NUM_BITS);
++}
++
++unsigned long SD_SetBaseAddress(
++    unsigned long baseAddress,
++    unsigned long descriptor)
++{
++    unsigned long mask = ~0UL << SD_ADDRESS_BIT;
++    baseAddress &= mask;
++    descriptor &= ~mask;
++    descriptor |= baseAddress;
++    return descriptor;
++}
++
++unsigned long SD_SetBufferable(
++    int           bufferable,
++    unsigned long descriptor)
++{
++    return SetBit(descriptor, bufferable, SD_BUFFERABLE_BIT);
++}
++
++unsigned long SD_SetCacheable(
++    int           cacheable,
++    unsigned long descriptor)
++{
++    return SetBit(descriptor, cacheable, SD_CACHEABLE_BIT);
++}
++
++unsigned long SD_SetDomain(
++    int           domain,
++    unsigned long descriptor)
++{
++    return SetField(descriptor, domain, SD_DOMAIN_BIT, SD_DOMAIN_NUM_BITS);
++}
++
++unsigned long SD_SetImplementationDefined(
++    unsigned long implementationDefined,
++    unsigned long descriptor)
++{
++    return SetBit(descriptor, implementationDefined, SD_IMP_BIT);
++}
++
++unsigned long FLPT_CreateSectionDescriptor(
++    unsigned long baseAddress,
++    unsigned char domain,
++    int           implementationDefined,
++    int           ap,
++    int           bufferable,
++    int           cacheable)
++{
++    unsigned long descriptor = FLD_SECTION_ID;
++    descriptor = SD_SetAccessPermission(ap, descriptor);
++    descriptor = SD_SetBaseAddress(baseAddress, descriptor);
++    descriptor = SD_SetBufferable(bufferable, descriptor);
++    descriptor = SD_SetCacheable(cacheable, descriptor);
++    descriptor = SD_SetDomain(domain, descriptor);
++    descriptor = SD_SetImplementationDefined(implementationDefined, descriptor);
++    return descriptor;
++}
++
++void FLPT_InsertSectionDescriptor(
++    unsigned long *tableBaseAdr,
++    int            index,
++    unsigned long  descriptor)
++{
++    *(tableBaseAdr + index) = descriptor;
++}
++
++void FLPT_Zeroise(
++    unsigned long *base_adr,
++    int            numberOfdescriptors) {
++    unsigned long faultDescriptor = FLPT_CreateFaultDescriptor(0);
++    int i;
++    for (i=0; i < numberOfdescriptors; i++) {
++        FLPT_InsertFaultDescriptor(base_adr, i, faultDescriptor);
++    }
++}
++
++void configure_caches(void)
++{
++    // Disable caches
++//    Cache_DataOff();
++printf("1");
++    Cache_InstOff();
++//    Cache_WriteBufferOff();
++
++    // Disable MMU
++printf("2");
++    MMU_SetEnabled(0);
++printf("3");
++    MMU_InvalidateDataTLB();
++printf("4");
++    MMU_InvalidateInstructionTLB();
++
++    // Setup the MMU
++printf("5");
++    MMU_SetAlignmentChecked(1);
++printf("6");
++    MMU_SetROMPermission(0);
++printf("7");
++    MMU_SetSystemPermission(1);
++
++    // Allow client access to all protection domains
++    int i;
++    for (i=0; i < NUM_DOMAINS; i++) {
++        MMU_SetDomainAccessValue(i, DAV_CLIENT);
++    }
++printf("8");
++
++    // Allocate first level page table, which we'll populate only with section
++    // descriptors, which cover 1MB each. Table must be aligned to a 16KB
++    // boundary.
++    // We'll put it 4KB into the SRAM and it will occupy:
++    //   64 entries for SDRAM
++    //   1  entry for SRAM
++    //   16 entries for APB bridge A
++    //   16 entries for APB bridge B
++    // The largest memory address we need to map is that of the SRAM at
++    // 0x4c000000 -> (4c000000/2^20)*4 = offset 1300h from table start ->
++    // require at least 1300h/4 +1 entries in table = 1217
++    unsigned long *firstLevelPageTableBaseAdr = (unsigned long*)SRAM_BASE;
++    FLPT_Zeroise(firstLevelPageTableBaseAdr, 4096);
++printf("9");
++
++    // Map entire adr space uncached, unbuffered, read/write, virtual == physical
++    unsigned megabytesPresent = 4096;
++    unsigned index = 0;
++    for (i=0; i < megabytesPresent; i++) {
++        FLPT_InsertSectionDescriptor(
++            firstLevelPageTableBaseAdr,
++            index,
++            FLPT_CreateSectionDescriptor(
++                index * 1024 * 1024,    // Base address
++                0,                      // Domain number
++                0,                      // Implementation defined
++                AP_LEVEL_1,             // Access permissions
++                0,                      // Bufferable
++                0));                    // Cacheable
++
++        ++index;
++    }
++printf("10");
++
++    // Map SDRAM as cached and buffered, read/write, virtual == physical
++    megabytesPresent = 64;
++    index = PHYS_SDRAM_1_PA / (1024 * 1024);
++    for (i=0; i < megabytesPresent; i++) {
++        FLPT_InsertSectionDescriptor(
++            firstLevelPageTableBaseAdr,
++            index,
++            FLPT_CreateSectionDescriptor(
++                index * 1024 * 1024,    // Base address
++                0,                      // Domain number
++                0,                      // Implementation defined
++                AP_LEVEL_1,             // Access permissions
++                1,                      // Bufferable
++                1));                    // Cacheable
++
++        ++index;
++    }
++printf("11");
++
++    // Map SRAM as cached and buffered, read/write, virtual == physical
++    megabytesPresent = 1;   // Actually only 32KB
++    index = SRAM_BASE / (1024 * 1024);
++    for (i=0; i < megabytesPresent; i++) {
++        FLPT_InsertSectionDescriptor(
++            firstLevelPageTableBaseAdr,
++            index,
++            FLPT_CreateSectionDescriptor(
++                index * 1024 * 1024,    // Base address
++                0,                      // Domain number
++                0,                      // Implementation defined
++                AP_LEVEL_1,             // Access permissions
++                1,                      // Bufferable
++                1));                    // Cacheable
++
++        ++index;
++    }
++printf("12");
++
++    // Map APB bridge A address space as uncached, unbuffered, read/write,
++    // virtual == physical
++    megabytesPresent = 16;
++    index = APB_BRIDGE_A_BASE_PA / (1024 * 1024);
++    for (i=0; i < megabytesPresent; i++) {
++        FLPT_InsertSectionDescriptor(
++            firstLevelPageTableBaseAdr,
++            index,
++            FLPT_CreateSectionDescriptor(
++                index * 1024 * 1024,    // Base address
++                0,                      // Domain number
++                0,                      // Implementation defined
++                AP_LEVEL_1,             // Access permissions
++                0,                      // Bufferable
++                0));                    // Cacheable
++
++        ++index;
++    }
++printf("13");
++
++    // Map APB bridge B address space as uncached, unbuffered, read/write,
++    // virtual == physical
++    megabytesPresent = 16;
++    index = APB_BRIDGE_B_BASE_PA / (1024 * 1024);
++    for (i=0; i < megabytesPresent; i++) {
++        FLPT_InsertSectionDescriptor(
++            firstLevelPageTableBaseAdr,
++            index,
++            FLPT_CreateSectionDescriptor(
++                index * 1024 * 1024,    // Base address
++                0,                      // Domain number
++                0,                      // Implementation defined
++                AP_LEVEL_1,             // Access permissions
++                0,                      // Bufferable
++                0));                    // Cacheable
++
++        ++index;
++    }
++printf("14");
++
++    // Load base address of first level page table
++    MMU_SetTranslationTableBaseAddress(firstLevelPageTableBaseAdr);
++printf("15");
++
++    // Enable MMU
++    MMU_SetEnabled(1);
++printf("16");
++
++    // Enable caches
++    Cache_DataOn();
++printf("17");
++    Cache_InstOn();
++printf("18");
++    Cache_WriteBufferOn();
++printf("19");
++}
+diff --git a/include/_exports.h b/include/_exports.h
+index 61dcaaf..52ae04b 100644
+--- a/include/_exports.h
++++ b/include/_exports.h
+@@ -12,6 +12,7 @@ EXPORT_FUNC(udelay)
+ EXPORT_FUNC(get_timer)
+ EXPORT_FUNC(vprintf)
+ EXPORT_FUNC(do_reset)
++EXPORT_FUNC(raise)
+ #if (CONFIG_COMMANDS & CFG_CMD_I2C)
+ EXPORT_FUNC(i2c_write)
+ EXPORT_FUNC(i2c_read)
+diff --git a/include/asm-arm/barrier.h b/include/asm-arm/barrier.h
+new file mode 100644
+index 0000000..72c77fd
+--- /dev/null
++++ b/include/asm-arm/barrier.h
+@@ -0,0 +1,25 @@
++#if !defined(__BARRIER_H__)
++#define __BARRIER_H__
++
++static inline void rmb(void)
++{
++    asm volatile ("" : : : "memory");
++}
++
++/*
++ * wmb() Would normally need to ensure shared memory regions are marked as
++ *       non-cacheable and non-bufferable, then the work to be done by wmb() is
++ *       to ensure the compiler and any possible CPU out of order writes are
++ *       flushed to memory, however we have no data cache and as far as I'm
++ *       aware we can't use the MMU to set page properties, so in our case wmb()
++ *       must cause the compiler to flush.
++ */
++
++static inline void wmb(void)
++{
++    // Cause the compiler to flush any registers containing pending write data
++    // to memory
++    asm volatile ("" : : : "memory");
++
++}
++#endif        //  #if !defined(__BARRIER_H__)
+diff --git a/include/asm-arm/global_data.h b/include/asm-arm/global_data.h
+index c2d5291..4f03011 100644
+--- a/include/asm-arm/global_data.h
++++ b/include/asm-arm/global_data.h
+@@ -61,6 +61,6 @@ typedef	struct	global_data {
+ #define	GD_FLG_DEVINIT	0x00002		/* Devices have been initialized	*/
+ #define	GD_FLG_SILENT	0x00004		/* Silent mode				*/
+ 
+-#define DECLARE_GLOBAL_DATA_PTR     register volatile gd_t *gd asm ("r8")
++#define DECLARE_GLOBAL_DATA_PTR     register gd_t* volatile gd asm ("r8");
+ 
+ #endif /* __ASM_GBL_DATA_H */
+diff --git a/include/asm-arm/mach-types.h b/include/asm-arm/mach-types.h
+index e482115..1e187ae 100644
+--- a/include/asm-arm/mach-types.h
++++ b/include/asm-arm/mach-types.h
+@@ -624,6 +624,7 @@ extern unsigned int __machine_arch_type;
+ #define MACH_TYPE_RMS100               611
+ #define MACH_TYPE_KB9200               612
+ #define MACH_TYPE_SX1                  613
++#define MACH_TYPE_OXNAS                1152
+ 
+ #ifdef CONFIG_ARCH_EBSA110
+ # ifdef machine_arch_type
+@@ -7945,6 +7946,18 @@ extern unsigned int __machine_arch_type;
+ # define machine_is_sx1()	(0)
+ #endif
+ 
++#ifdef CONFIG_MACH_OXNAS
++# ifdef machine_arch_type
++#  undef machine_arch_type
++#  define machine_arch_type	__machine_arch_type
++# else
++#  define machine_arch_type	MACH_TYPE_OXNAS
++# endif
++# define machine_is_oxnas()	(machine_arch_type == MACH_TYPE_OXNAS)
++#else
++# define machine_is_oxnas()	(0)
++#endif
++
+ /*
+  * These have not yet been registered
+  */
+diff --git a/include/asm-arm/u-boot.h b/include/asm-arm/u-boot.h
+index c3b0e4a..c16a53a 100644
+--- a/include/asm-arm/u-boot.h
++++ b/include/asm-arm/u-boot.h
+@@ -41,6 +41,8 @@ typedef struct bd_info {
+ 	ulong start;
+ 	ulong size;
+     } 			bi_dram[CONFIG_NR_DRAM_BANKS];
++	unsigned long	bi_sramstart;	/* start of SRAM memory */
++	unsigned long	bi_sramsize;	/* size	 of SRAM memory */
+ } bd_t;
+ 
+ #define bi_env_data bi_env->data
+diff --git a/include/ata.h b/include/ata.h
+index 8584226..af87ffe 100644
+--- a/include/ata.h
++++ b/include/ata.h
+@@ -80,7 +80,12 @@
+ /*
+  * Device / Head Register Bits
+  */
++#ifdef CONFIG_OXNAS
++#define ATA_DEVICE(x) (0)
++#else
+ #define ATA_DEVICE(x)	((x & 1)<<4)
++#endif // CONFIG_OXNAS
++
+ #define ATA_LBA		0xE0
+ 
+ /*
+diff --git a/include/cmd_confdefs.h b/include/cmd_confdefs.h
+index 600a631..493c787 100644
+--- a/include/cmd_confdefs.h
++++ b/include/cmd_confdefs.h
+@@ -92,6 +92,7 @@
+ #define CFG_CMD_XIMG	0x0400000000000000ULL	/* Load part of Multi Image	*/
+ #define CFG_CMD_UNIVERSE 0x0800000000000000ULL	/* Tundra Universe Support      */
+ #define CFG_CMD_EXT2    0x1000000000000000ULL	/* EXT2 Support                 */
++#define CFG_CMD_LEDFAIL 0x2000000000000000ULL	/* OXNAS Failure LED support */
+ 
+ #define CFG_CMD_ALL	0xFFFFFFFFFFFFFFFFULL	/* ALL commands			*/
+ 
+diff --git a/include/common.h b/include/common.h
+index f0b82e5..2e0e0b2 100644
+--- a/include/common.h
++++ b/include/common.h
+@@ -204,7 +204,7 @@ extern ulong load_addr;		/* Default Load Address */
+ /* common/cmd_nvedit.c */
+ int	env_init     (void);
+ void	env_relocate (void);
+-char	*getenv	     (uchar *);
++char	*getenv	     (const uchar *);
+ int	getenv_r     (uchar *name, uchar *buf, unsigned len);
+ int	saveenv	     (void);
+ #ifdef CONFIG_PPC		/* ARM version to be fixed! */
+diff --git a/include/configs/oxnas.h b/include/configs/oxnas.h
+new file mode 100644
+index 0000000..af938b9
+--- /dev/null
++++ b/include/configs/oxnas.h
+@@ -0,0 +1,595 @@
++/*
++ * (C) Copyright 2005
++ * Oxford Semiconductor Ltd
++ *
++ * See file CREDITS for list of people who contributed to this
++ * project.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++
++#ifndef __CONFIG_H
++#define __CONFIG_H
++
++#define readb(p)  (*(volatile u8 *)(p))
++#define readl(p)  (*(volatile u32 *)(p))
++#define writeb(v, p) (*(volatile u8 *)(p)= (v))
++#define writel(v, p) (*(volatile u32*)(p)=(v))
++
++#define CFG_FLASH_EMPTY_INFO
++
++/**
++ * Architecture
++ */
++#define CONFIG_ARM926EJS    1
++#define CONFIG_OXNAS        1
++#define CONFIG_OXNAS_ENABLE_PCI         /* Enables PCI clock and takes out of reset - needed if require access to static bus */
++#define CONFIG_OXNAS_FEEDBACK_PCI_CLKS  /* Feedback PCI clock out 3 to drive PCI core clock - needed if require access to static bus */
++#define CONFIG_OXNAS_MANUAL_STATIC_ARBITRATION
++#if (USE_SATA == 1)
++#define CONFIG_OXNAS_USE_SATA           /* Define to include support for SATA disks */
++#if (USE_SATA_ENV == 1)
++#define ENV_ON_SATA                     /* Define to have the U-Boot env. stored on SATA disk */
++#endif // USE_SATA_ENV
++#endif // USE_SATA
++#if (USE_FLASH == 0)
++#define CFG_NO_FLASH                    /* Define to NOT include flash support on static bus*/
++#endif //USE_FLASH
++
++/* Won't be using any interrupts */
++#undef CONFIG_USE_IRQ
++
++/* Everything, incl board info, in Hz */
++#undef CFG_CLKS_IN_HZ
++
++#define CFG_HUSH_PARSER		1
++#define CFG_PROMPT_HUSH_PS2	"> "
++
++/* Miscellaneous configurable options */
++#define CFG_LONGHELP				/* undef to save memory		*/
++#ifdef CFG_HUSH_PARSER
++#define CFG_PROMPT		"$ "		/* Monitor Command Prompt */
++#else
++#define CFG_PROMPT		"# "		/* Monitor Command Prompt */
++#endif
++#define CFG_CBSIZE      256             /* Console I/O Buffer Size  */
++
++/* Print Buffer Size */
++#define CFG_PBSIZE      ((CFG_CBSIZE)+sizeof(CFG_PROMPT)+16)
++#define CFG_MAXARGS     16              /* max number of command args   */
++#define CFG_BARGSIZE    (CFG_CBSIZE)    /* Boot Argument Buffer Size    */
++
++#define CONFIG_CMDLINE_TAG          1   /* enable passing of ATAGs  */
++#define CONFIG_SETUP_MEMORY_TAGS    1
++#define CONFIG_MISC_INIT_R          1   /* call misc_init_r during start up */
++#define CONFIG_INITRD_TAG           1   /* allow initrd tag to be generated */
++
++/* May want to do some setup prior to relocation */
++#define CONFIG_INIT_CRITICAL
++
++/* ARM specific late initialisation */
++#define BOARD_LATE_INIT
++
++/**
++ * Stack sizes
++ *
++ * The stack sizes are set up in start.S using the settings below
++ */
++#define CONFIG_STACKSIZE        (128*1024)  /* regular stack */
++#ifdef CONFIG_USE_IRQ
++#define CONFIG_STACKSIZE_IRQ    (4*1024)    /* IRQ stack */
++#define CONFIG_STACKSIZE_FIQ    (4*1024)    /* FIQ stack */
++#endif
++
++/**
++ * RAM
++ */
++#define CONFIG_NR_DRAM_BANKS    1           /* We have 1 bank of SDRAM */
++#define PHYS_SDRAM_1_PA         0x48000000  /* SDRAM Bank #1 */
++#if (NAS_VERSION == 810)
++#define PHYS_SDRAM_1_MAX_SIZE	 (256 * 1024 * 1024)
++#endif // NAS_VERSION
++#define CFG_SRAM_BASE           ((PHYS_SDRAM_1_PA) + (PHYS_SDRAM_1_MAX_SIZE))
++#if (NAS_VERSION == 810)
++#define CFG_SRAM_SIZE			 (128 * 1024)
++#endif // NAS_VERSION
++
++#define INITIALISE_SDRAM
++
++/* Default location from which bootm etc will load */
++#define CFG_LOAD_ADDR   (PHYS_SDRAM_1_PA)
++
++/**
++ * Core addresses
++ */
++#define MAC_BASE_PA             0x40400000
++#define STATIC_CS0_BASE_PA      0x41000000
++#define STATIC_CS1_BASE_PA      0x41400000
++#define STATIC_CS2_BASE_PA      0x41800000
++#define STATIC_CONTROL_BASE_PA  0x41C00000
++#define SATA_DATA_BASE_PA       0x42000000
++
++#define APB_BRIDGE_A_BASE_PA    0x44000000
++#define APB_BRIDGE_B_BASE_PA    0x45000000
++
++#define GPIO_1_PA               ((APB_BRIDGE_A_BASE_PA) + 0x0)
++#define GPIO_2_PA               ((APB_BRIDGE_A_BASE_PA) + 0x100000)
++
++#define SYS_CONTROL_BASE_PA     ((APB_BRIDGE_B_BASE_PA) + 0x0)
++#define DMA_BASE_PA             ((APB_BRIDGE_B_BASE_PA) + 0x600000)
++#define RPS_BASE                ((APB_BRIDGE_B_BASE_PA) + 0x300000)
++
++/* Static bus registers */
++#define STATIC_CONTROL_VERSION  ((STATIC_CONTROL_BASE_PA) + 0x0)
++#define STATIC_CONTROL_BANK0    ((STATIC_CONTROL_BASE_PA) + 0x4)
++#define STATIC_CONTROL_BANK1    ((STATIC_CONTROL_BASE_PA) + 0x8)
++#define STATIC_CONTROL_BANK2    ((STATIC_CONTROL_BASE_PA) + 0xC)
++
++/* Clock to the ARM/DDR */
++#if (FPGA == 0)
++#define NOMINAL_ARMCLK  ((PLL400) / 2)
++#define NOMINAL_SYSCLK  ((PLL400) / 4)
++#else // !FPGA
++#define NOMINAL_ARMCLK  (FPGA_ARM_CLK)
++#define NOMINAL_SYSCLK  ((PLL400) / 4)
++#endif // !FPGA
++
++/**
++ * Timer
++ */
++#define CFG_TIMERBASE            ((RPS_BASE) + 0x200)
++#define TIMER_PRESCALE_BIT       2
++#define TIMER_PRESCALE_1_ENUM    0
++#define TIMER_PRESCALE_16_ENUM   1
++#define TIMER_PRESCALE_256_ENUM  2
++#define TIMER_MODE_BIT           6
++#define TIMER_MODE_FREE_RUNNING  0
++#define TIMER_MODE_PERIODIC      1
++#define TIMER_ENABLE_BIT         7
++#define TIMER_ENABLE_DISABLE     0
++#define TIMER_ENABLE_ENABLE      1
++
++#define TIMER_PRESCALE_ENUM      (TIMER_PRESCALE_256_ENUM)
++#define CFG_HZ                   ((RPSCLK) / 256)
++
++/**
++ * GPIO
++ */
++#define GPIO_1_OE       ((GPIO_1_PA) + 0x4)
++#define GPIO_1_SET_OE   ((GPIO_1_PA) + 0x1C)
++#define GPIO_1_CLR_OE   ((GPIO_1_PA) + 0x20)
++
++#define GPIO_2_OE       ((GPIO_2_PA) + 0x4)
++#define GPIO_2_SET_OE   ((GPIO_2_PA) + 0x1C)
++#define GPIO_2_CLR_OE   ((GPIO_2_PA) + 0x20)
++
++/**
++ * Serial Configuration
++ */
++#define EXT_UART_BASE       0x28000000
++
++#define UART_1_BASE (APB_BRIDGE_A_BASE_PA + 0x200000)
++#define UART_2_BASE (APB_BRIDGE_A_BASE_PA + 0x300000)
++#define UART_3_BASE (APB_BRIDGE_A_BASE_PA + 0x900000)
++#define UART_4_BASE (APB_BRIDGE_A_BASE_PA + 0xA00000)
++
++#define CFG_NS16550          1
++#define CFG_NS16550_SERIAL   1
++#define CFG_NS16550_REG_SIZE 1
++
++#if (USE_EXTERNAL_UART != 0)
++#define CFG_NS16550_CLK      16000000
++#define CFG_NS16550_COM1     (EXT_UART_BASE)
++#else // USE_EXTERNAL_UART
++#define CFG_NS16550_CLK      (NOMINAL_SYSCLK)
++#define USE_UART_FRACTIONAL_DIVIDER
++#if (INTERNAL_UART == 1)
++#define CONFIG_OXNAS_UART1
++#define CFG_NS16550_COM1     (UART_1_BASE)
++#elif (INTERNAL_UART == 2)
++#define CONFIG_OXNAS_UART2
++#define CFG_NS16550_COM1     (UART_2_BASE)
++#elif (INTERNAL_UART == 3)
++#define CONFIG_OXNAS_UART3
++#define CFG_NS16550_COM1     (UART_3_BASE)
++#else
++#define CONFIG_OXNAS_UART4
++#define CFG_NS16550_COM1     (UART_4_BASE)
++#endif // CONFIG_OXNAS_UART
++#endif // USE_EXTERNAL_UART
++
++#define CONFIG_CONS_INDEX    1
++#define CONFIG_BAUDRATE      115200
++#define CFG_BAUDRATE_TABLE   { 9600, 19200, 38400, 57600, 115200 }
++
++/**
++ * Monitor commands
++ */
++#define BASE_COMMANDS (CFG_CMD_IMI    | \
++                       CFG_CMD_BDI    | \
++                       CFG_CMD_NET    | \
++                       CFG_CMD_PING   | \
++                       CFG_CMD_ENV    | \
++                       CFG_CMD_RUN    | \
++                       CFG_CMD_MEMORY)
++
++#ifdef CFG_NO_FLASH
++#define FLASH_COMMANDS (BASE_COMMANDS)
++#else
++#define FLASH_COMMANDS (BASE_COMMANDS | CFG_CMD_FLASH)
++#endif // CFG_NO_FLASH
++
++#ifdef CONFIG_OXNAS_USE_SATA
++#define SATA_COMMANDS (FLASH_COMMANDS | CFG_CMD_IDE | CFG_CMD_EXT2 | CFG_CMD_LEDFAIL)
++#else
++#define SATA_COMMANDS (FLASH_COMMANDS)
++#endif // CONFIG_OXNAS_USE_SATA
++
++#define CONFIG_COMMANDS SATA_COMMANDS
++
++/* This must be included AFTER the definition of CONFIG_COMMANDS */
++#include <cmd_confdefs.h>
++
++/**
++ * Booting
++ */
++#if (LINUX_ROOT_RAIDED == 1)
++#define LINUX_ROOT_DEVICE "root=/dev/md1"
++#else
++#define LINUX_ROOT_DEVICE "root=/dev/sda1"
++#endif
++#define CONFIG_BOOTARGS LINUX_ROOT_DEVICE " console=ttyS0,115200 elevator=cfq mac_adr=0x00,0x30,0xe0,0x00,0x00,0x01"
++
++#ifdef CONFIG_OXNAS_USE_SATA
++#define CONFIG_BOOTDELAY	2
++#define CONFIG_BOOTCOMMAND	"run select0 load boot || run select0 load2 boot || run lightled select1 load extinguishled boot || run lightled select1 load2 extinguishled boot || lightled"
++#define CONFIG_EXTRA_ENV_SETTINGS \
++    "select0=ide dev 0\0" \
++    "select1=ide dev 1\0" \
++    "load=ide read 0x48500000 122 1644\0" \
++    "load2=ide read 0x48500000 e000 1644\0" \
++	"lightled=ledfail 1\0" \
++	"extinguishled=ledfail 0\0" \
++    "boot=bootm 48500000\0"
++#else // CONFIG_OXNAS_USE_SATA
++#define CONFIG_BOOTDELAY	15
++#define CONFIG_BOOTCOMMAND	"bootm 0x41020000"
++#endif // CONFIG_OXNAS_USE_SATA
++
++//#define CONFIG_SHOW_BOOT_PROGRESS   1
++
++/**
++ * Networking
++ */
++#define CONFIG_ETHADDR      00:30:e0:00:00:01
++#define CONFIG_NETMASK      255.255.0.0
++#define CONFIG_IPADDR       172.31.0.128
++#define CONFIG_SERVERIP     172.31.0.100
++#define CONFIG_BOOTFILE     "uImage"
++#define CFG_AUTOLOAD        "n"
++#define CONFIG_NET_RETRY_COUNT 30
++
++/**
++ * Flash support
++ */
++#ifndef CFG_NO_FLASH
++
++#define FORCE_TOP_BOOT_FLASH	1
++
++#define CFG_FLASH_CFI			1
++#define CFG_FLASH_CFI_DRIVER	1
++
++#define NUM_FLASH_MAIN_BLOCKS   63          /* For Intel 28F320B3T */
++#define NUM_FLASH_PARAM_BLOCKS  8           /* For Intel 28F320B3T */
++#define FLASH_MAIN_BLOCK_SIZE   (64*1024)   /* For Intel 28F320B3T family */
++#define FLASH_PARAM_BLOCK_SIZE  (8*1024)    /* For Intel 28F320B3T family */
++
++/* Assuming counts main blocks and parameter blocks, as the Intel/AMD detection */
++/* I'm intending to copy would seem to indicate */
++#define CFG_MAX_FLASH_SECT      (NUM_FLASH_MAIN_BLOCKS + NUM_FLASH_PARAM_BLOCKS)
++
++#define CFG_MAX_FLASH_BANKS     1           /* Assume counts flash devices */
++#define FLASH_BASE_OFF          0
++#define CFG_FLASH_BASE          ((STATIC_CS0_BASE_PA) + (FLASH_BASE_OFF))
++#define PHYS_FLASH_1            (CFG_FLASH_BASE)
++
++#define CFG_FLASH_ERASE_TOUT    (20*CFG_HZ)	/* Timeout for Flash Erase */
++#define CFG_FLASH_WRITE_TOUT    (20*CFG_HZ)	/* Timeout for Flash Write */
++#define CFG_FLASH_WRITE_ATTEMPTS 5
++
++#define STATIC_BUS_FLASH_CONFIG 0x4f1f3f3f  /* Slow ASIC settings */
++
++#endif // !CFG_NO_FLASH
++
++/**
++ * Environment organization
++ */
++#ifdef ENV_ON_SATA
++
++/* Environment on SATA disk */
++#define SIZE_TO_SECTORS(x) ((x) / 512)
++#define CFG_ENV_IS_IN_DISK
++#define CFG_ENV_SIZE			(8*1024)
++#define ENVIRONMENT_OFFSET		((CFG_SRAM_SIZE) - (CFG_ENV_SIZE) - 1024)
++#define CFG_ENV_ADDR			((CFG_SRAM_BASE) + (ENVIRONMENT_OFFSET))
++#define ROM_LOADER_LOAD_START_SECTOR 34
++#define CFG_ENV_DISK_SECTOR 	((ROM_LOADER_LOAD_START_SECTOR) + SIZE_TO_SECTORS(ENVIRONMENT_OFFSET))
++#define ROM_LOADER_LOAD_REDUNDANT_START_SECTOR 57088
++#define CFG_ENV_DISK_REDUNDANT_SECTOR ((ROM_LOADER_LOAD_REDUNDANT_START_SECTOR) + SIZE_TO_SECTORS(ENVIRONMENT_OFFSET))
++
++#else
++/** Flash based environment
++ *
++ *  It appears that all flash env start/size info. has to be pre-defined. How
++ *  this is supposed to work when the flash detection code could cope with all
++ *  sorts of different flash is hard to see.
++ *  It appears from the README that with bottom/top boot flashes with smaller
++ *  parameter blocks available, the environment code will only use a single
++ *  one of these smaller sectors for the environment, i.e. CFG_ENV_SECT_SIZE
++ *  is the size of the environment. I hope this isn't really true. The defines
++ *  below may well not work if this is the truth
++ */
++#define CFG_ENV_IS_IN_FLASH
++/* Environment in flash device parameter blocks */
++#define CFG_ENV_SECT_SIZE   (8*1024)
++/* First parameter block for environment */
++#define CFG_ENV_SIZE        CFG_ENV_SECT_SIZE
++/* Second parameter block for backup environment */
++#define CFG_ENV_SIZE_REDUND (CFG_ENV_SIZE)
++/* Main environment occupies first parameter block */
++#define CFG_ENV_ADDR        ((CFG_FLASH_BASE)+((NUM_FLASH_MAIN_BLOCKS)*(FLASH_MAIN_BLOCK_SIZE)))
++/* Backup environment occupies second parameter block */
++#define CFG_ENV_ADDR_REDUND ((CFG_ENV_ADDR)+(CFG_ENV_SIZE))
++
++#endif // ENV_ON_SATA
++
++#define CONFIG_ENV_OVERWRITE
++
++/* Magic number that indicates rebooting into upgrade mode */
++#define UPGRADE_MAGIC 0x31	/* ASCII '1' */
++
++/* Magic number that indicates user recovery on reboot */
++/* Also defined in oxnas_user_recovery.agent */
++#define RECOVERY_MAGIC 0x31    /* ASCII '1' */
++
++/* Magic number that indicates controlled power down on reboot */
++/* Also defined in controlled_power_down.sh in init.d */
++#define CONTROLLED_POWER_DOWN_MAGIC 0x31  /* ASCII '1' */
++
++/* This flag is set in SRAM location by Co Proc */
++#define CONTROLLED_POWER_UP_MAGIC  0x31 /* ASCII '1' */
++/* 9k + a quad from top */
++/* Be carefule on changing the location of this flag
++ * u-boot has other things to write in SRAM too
++ */
++#define POWER_ON_FLAG_SRAM_OFFSET 	9220
++#if (USE_LEON_TIME_COUNT == 1)
++#define MS_TIME_COUNT_SRAM_OFFSET	(POWER_ON_FLAG_SRAM_OFFSET + 4)
++#endif
++
++/* Size of malloc() pool */
++#define CFG_MALLOC_LEN      (CFG_ENV_SIZE + 128*1024)
++#define CFG_GBL_DATA_SIZE   128 /* size in bytes reserved for initial data */
++
++/**
++ * ASM startup control
++ */
++/* Start of address within SRAM of loader's exception table. */
++/* ROM-based exception table will redirect to here */
++#define EXCEPTION_BASE  (CFG_SRAM_BASE)
++
++/**
++ * Disk related stuff
++ */
++#define CONFIG_LBA48
++#define CONFIG_DOS_PARTITION
++#define CFG_IDE_MAXDEVICE   2
++#define CFG_IDE_MAXBUS      1
++#define CONFIG_IDE_PREINIT
++#undef CONFIG_IDE_RESET
++#undef CONFIG_IDE_LED
++#define CFG_ATA_DATA_OFFSET 0
++#define CFG_ATA_REG_OFFSET  0
++#define CFG_ATA_ALT_OFFSET  0
++
++/**
++ * System block reset and clock control
++ */
++#define SYS_CTRL_USB11_CTRL           (SYS_CONTROL_BASE_PA + 0x00)
++#define SYS_CTRL_PCI_CTRL0            (SYS_CONTROL_BASE_PA + 0x04)
++#define SYS_CTRL_PCI_CTRL1            (SYS_CONTROL_BASE_PA + 0x08)
++#define SYS_CTRL_GPIO_PRIMSEL_CTRL_0  (SYS_CONTROL_BASE_PA + 0x0C)
++#define SYS_CTRL_GPIO_PRIMSEL_CTRL_1  (SYS_CONTROL_BASE_PA + 0x10)
++#define SYS_CTRL_GPIO_SECSEL_CTRL_0   (SYS_CONTROL_BASE_PA + 0x14)
++#define SYS_CTRL_GPIO_SECSEL_CTRL_1   (SYS_CONTROL_BASE_PA + 0x18)
++#define SYS_CTRL_GPIO_TERTSEL_CTRL_0  (SYS_CONTROL_BASE_PA + 0x8C)
++#define SYS_CTRL_GPIO_TERTSEL_CTRL_1  (SYS_CONTROL_BASE_PA + 0x90)
++#define SYS_CTRL_USB11_STAT           (SYS_CONTROL_BASE_PA + 0x1c)
++#define SYS_CTRL_PCI_STAT             (SYS_CONTROL_BASE_PA + 0x20)
++#define SYS_CTRL_CKEN_SET_CTRL        (SYS_CONTROL_BASE_PA + 0x2C)
++#define SYS_CTRL_CKEN_CLR_CTRL        (SYS_CONTROL_BASE_PA + 0x30)
++#define SYS_CTRL_RSTEN_SET_CTRL       (SYS_CONTROL_BASE_PA + 0x34)
++#define SYS_CTRL_RSTEN_CLR_CTRL       (SYS_CONTROL_BASE_PA + 0x38)
++#define SYS_CTRL_PLLSYS_CTRL          (SYS_CONTROL_BASE_PA + 0x48)
++#define SYS_CTRL_PLLSYS_KEY_CTRL      (SYS_CONTROL_BASE_PA + 0x6C)
++#define SYS_CTRL_GMAC_CTRL            (SYS_CONTROL_BASE_PA + 0x78)
++#define SYS_CTRL_UART_CTRL            (SYS_CONTROL_BASE_PA + 0x94)
++
++#define SYS_CTRL_CKEN_COPRO_BIT  0
++#define SYS_CTRL_CKEN_DMA_BIT    1
++#define SYS_CTRL_CKEN_DPE_BIT    2
++#define SYS_CTRL_CKEN_DDR_BIT    3
++#define SYS_CTRL_CKEN_SATA_BIT   4
++#define SYS_CTRL_CKEN_I2S_BIT    5
++#define SYS_CTRL_CKEN_USBHS_BIT  6
++#define SYS_CTRL_CKEN_MAC_BIT    7
++#define SYS_CTRL_CKEN_PCI_BIT    8
++#define SYS_CTRL_CKEN_STATIC_BIT 9
++#define SYS_CTRL_CKEN_DDR_PHY_BIT 10
++
++#define SYS_CTRL_RSTEN_ARM_BIT          0
++#define SYS_CTRL_RSTEN_COPRO_BIT        1
++#define SYS_CTRL_RSTEN_USBHS_BIT        4
++#define SYS_CTRL_RSTEN_USBHSPHY_BIT     5
++#define SYS_CTRL_RSTEN_MAC_BIT          6
++#define SYS_CTRL_RSTEN_PCI_BIT          7
++#define SYS_CTRL_RSTEN_DMA_BIT          8
++#define SYS_CTRL_RSTEN_DPE_BIT          9
++#define SYS_CTRL_RSTEN_DDR_BIT          10
++#define SYS_CTRL_RSTEN_SATA_BIT         11
++#define SYS_CTRL_RSTEN_SATA_LINK_BIT    12
++#define SYS_CTRL_RSTEN_SATA_PHY_BIT     13
++#define SYS_CTRL_RSTEN_STATIC_BIT       15
++#define SYS_CTRL_RSTEN_GPIO_BIT         16
++#define SYS_CTRL_RSTEN_UART1_BIT        17
++#define SYS_CTRL_RSTEN_UART2_BIT        18
++#define SYS_CTRL_RSTEN_MISC_BIT         19
++#define SYS_CTRL_RSTEN_I2S_BIT          20
++#define SYS_CTRL_RSTEN_AHB_MON_BIT      21
++#define SYS_CTRL_RSTEN_UART3_BIT        22
++#define SYS_CTRL_RSTEN_UART4_BIT        23
++#define SYS_CTRL_RSTEN_SGDMA_BIT        24
++#define SYS_CTRL_RSTEN_DDR_PHY_BIT      25
++#define SYS_CTRL_RSTEN_BUS_BIT          31
++
++#define SYS_CTRL_GMAC_RGMII         2
++#define SYS_CTRL_GMAC_SIMPLE_MAX    1
++#define SYS_CTRL_GMAC_CKEN_GTX      0
++
++#define SYS_CTRL_CKCTRL_CTRL_ADDR     (SYS_CONTROL_BASE_PA + 0x64)
++
++#define SYS_CTRL_CKCTRL_PCI_DIV_BIT 0
++#define SYS_CTRL_CKCTRL_SLOW_BIT    8
++
++#define SYS_CTRL_UART2_DEQ_EN       0
++#define SYS_CTRL_UART3_DEQ_EN       1
++#define SYS_CTRL_UART3_IQ_EN        2
++#define SYS_CTRL_UART4_IQ_EN        3
++#define SYS_CTRL_UART4_NOT_PCI_MODE 4
++
++#define SYS_CTRL_PCI_CTRL1_PCI_STATIC_RQ_BIT 11
++
++/**
++ * SATA related definitions
++ */
++#define ATA_PORT_CTL        0
++#define ATA_PORT_FEATURE    1
++#define ATA_PORT_NSECT      2
++#define ATA_PORT_LBAL       3
++#define ATA_PORT_LBAM       4
++#define ATA_PORT_LBAH       5
++#define ATA_PORT_DEVICE     6
++#define ATA_PORT_COMMAND    7
++
++#define SATA_0_REGS_BASE    (APB_BRIDGE_B_BASE_PA + 0x900000)
++#define SATA_1_REGS_BASE    (APB_BRIDGE_B_BASE_PA + 0x910000)
++#define SATA_HOST_REGS_BASE (APB_BRIDGE_B_BASE_PA + 0x9e0000)
++
++/* The offsets to the SATA registers */
++#define SATA_ORB1_OFF           0
++#define SATA_ORB2_OFF           1
++#define SATA_ORB3_OFF           2
++#define SATA_ORB4_OFF           3
++#define SATA_ORB5_OFF           4
++
++#define SATA_FIS_ACCESS         11
++#define SATA_INT_STATUS_OFF     12  /* Read only */
++#define SATA_INT_CLR_OFF        12  /* Write only */
++#define SATA_INT_ENABLE_OFF     13  /* Read only */
++#define SATA_INT_ENABLE_SET_OFF 13  /* Write only */
++#define SATA_INT_ENABLE_CLR_OFF 14  /* Write only */
++#define SATA_VERSION_OFF        15
++#define SATA_CONTROL_OFF        23
++#define SATA_COMMAND_OFF        24
++#define SATA_PORT_CONTROL_OFF   25
++#define SATA_DRIVE_CONTROL_OFF  26
++
++/* The offsets to the link registers that are access in an asynchronous manner */
++#define SATA_LINK_DATA     28
++#define SATA_LINK_RD_ADDR  29
++#define SATA_LINK_WR_ADDR  30
++#define SATA_LINK_CONTROL  31
++
++/* SATA interrupt status register fields */
++#define SATA_INT_STATUS_EOC_RAW_BIT     ( 0 + 16)
++#define SATA_INT_STATUS_ERROR_BIT       ( 2 + 16)
++#define SATA_INT_STATUS_EOADT_RAW_BIT   ( 1 + 16)
++
++/* SATA core command register commands */
++#define SATA_CMD_WRITE_TO_ORB_REGS              2
++#define SATA_CMD_WRITE_TO_ORB_REGS_NO_COMMAND   4
++
++#define SATA_CMD_BUSY_BIT 7
++
++#define SATA_SCTL_CLR_ERR 0x00000316UL
++
++#define SATA_OPCODE_MASK 0x3
++
++#define SATA_LBAL_BIT    0
++#define SATA_LBAM_BIT    8
++#define SATA_LBAH_BIT    16
++#define SATA_HOB_LBAH_BIT 24
++#define SATA_DEVICE_BIT  24
++#define SATA_NSECT_BIT   0
++#define SATA_FEATURE_BIT 16
++#define SATA_COMMAND_BIT 24
++#define SATA_CTL_BIT     24
++
++/* ATA status (7) register field definitions */
++#define ATA_STATUS_BSY_BIT     7
++#define ATA_STATUS_DRDY_BIT    6
++#define ATA_STATUS_DF_BIT      5
++#define ATA_STATUS_DRQ_BIT     3
++#define ATA_STATUS_ERR_BIT     0
++
++/* ATA device (6) register field definitions */
++#define ATA_DEVICE_FIXED_MASK 0xA0
++#define ATA_DEVICE_DRV_BIT 4
++#define ATA_DEVICE_DRV_NUM_BITS 1
++#define ATA_DEVICE_LBA_BIT 6
++
++/* ATA control (0) register field definitions */
++#define ATA_CTL_SRST_BIT   2
++
++/* ATA Command register initiated commands */
++#define ATA_CMD_INIT    0x91
++#define ATA_CMD_IDENT   0xEC
++
++#define SATA_STD_ASYNC_REGS_OFF 0x20
++#define SATA_SCR_STATUS      0
++#define SATA_SCR_ERROR       1
++#define SATA_SCR_CONTROL     2
++#define SATA_SCR_ACTIVE      3
++#define SATA_SCR_NOTIFICAION 4
++
++#define SATA_BURST_BUF_FORCE_EOT_BIT        0
++#define SATA_BURST_BUF_DATA_INJ_ENABLE_BIT  1
++#define SATA_BURST_BUF_DIR_BIT              2
++#define SATA_BURST_BUF_DATA_INJ_END_BIT     3
++#define SATA_BURST_BUF_FIFO_DIS_BIT         4
++#define SATA_BURST_BUF_DIS_DREQ_BIT         5
++#define SATA_BURST_BUF_DREQ_BIT             6
++
++/* Button on GPIO 32 */
++#define RECOVERY_BUTTON         (0x00000001 << 0)
++#define RECOVERY_PRISEL_REG     SYS_CTRL_GPIO_PRIMSEL_CTRL_1
++#define RECOVERY_SECSEL_REG     SYS_CTRL_GPIO_SECSEL_CTRL_1
++#define RECOVERY_TERSEL_REG     SYS_CTRL_GPIO_TERTSEL_CTRL_1
++#define RECOVERY_CLR_OE_REG     GPIO_2_CLR_OE
++#define RECOVERY_DEBOUNCE_REG   GPIO_2_INPUT_DEBOUNCE_ENABLE
++#define RECOVERY_DATA           GPIO_2_PA
++
++#endif // CONFIG_H
+diff --git a/include/flash.h b/include/flash.h
+index 2981bde..343a674 100644
+--- a/include/flash.h
++++ b/include/flash.h
+@@ -207,6 +207,7 @@ extern void flash_read_factory_serial(flash_info_t * info, void * buffer, int of
+ #define ATM_ID_BV1614	0x000000C0	/* 49BV1614  ID */
+ #define ATM_ID_BV1614A	0x000000C8	/* 49BV1614A ID */
+ #define ATM_ID_BV6416	0x000000D6	/* 49BV6416  ID */
++#define ATM_ID_BV322    0x000000c9      /* 49BV322A  ID */
+ 
+ #define FUJI_ID_29F800BA  0x22582258	/* MBM29F800BA ID  (8M) */
+ #define FUJI_ID_29F800TA  0x22D622D6	/* MBM29F800TA ID  (8M) */
+@@ -405,6 +406,7 @@ extern void flash_read_factory_serial(flash_info_t * info, void * buffer, int of
+ #define FLASH_MAN_INTEL 0x00300000
+ #define FLASH_MAN_MT	0x00400000
+ #define FLASH_MAN_SHARP 0x00500000
++#define FLASH_MAN_ATM   0x00070000      /* Atmel */
+ 
+ 
+ #define FLASH_TYPEMASK	0x0000FFFF	/* extract FLASH type	information	*/
+diff --git a/include/ns16550.h b/include/ns16550.h
+index 5890246..5be1d28 100644
+--- a/include/ns16550.h
++++ b/include/ns16550.h
+@@ -19,6 +19,10 @@ struct NS16550 {
+ 	unsigned char lsr;		/* 5 */
+ 	unsigned char msr;		/* 6 */
+ 	unsigned char scr;		/* 7 */
++#if defined(CONFIG_OXNAS)
++	unsigned char ext;		/* 8 */
++	unsigned char dlf;		/* 9 */
++#endif
+ #if defined(CONFIG_OMAP730)
+ 	unsigned char mdr1;		/* 8 */
+ 	unsigned char reg9;		/* 9 */
+diff --git a/lib_arm/board.c b/lib_arm/board.c
+index 6f8c7fe..b9506be 100644
+--- a/lib_arm/board.c
++++ b/lib_arm/board.c
+@@ -39,6 +39,9 @@
+ #include "../drivers/lan91c96.h"
+ #endif
+ 
++DECLARE_GLOBAL_DATA_PTR
++
++
+ #if (CONFIG_COMMANDS & CFG_CMD_NAND)
+ void nand_init (void);
+ #endif
+@@ -106,7 +109,6 @@ void *sbrk (ptrdiff_t increment)
+ 
+ static int init_baudrate (void)
+ {
+-	DECLARE_GLOBAL_DATA_PTR;
+ 
+ 	uchar tmp[64];	/* long enough for environment variables */
+ 	int i = getenv_r ("baudrate", tmp, sizeof (tmp));
+@@ -142,16 +144,18 @@ static int display_banner (void)
+  */
+ static int display_dram_config (void)
+ {
+-	DECLARE_GLOBAL_DATA_PTR;
+ 	int i;
+ 
+ 	puts ("RAM Configuration:\n");
+ 
+ 	for(i=0; i<CONFIG_NR_DRAM_BANKS; i++) {
+-		printf ("Bank #%d: %08lx ", i, gd->bd->bi_dram[i].start);
++		printf ("\tBank #%d: %08lx ", i, gd->bd->bi_dram[i].start);
+ 		print_size (gd->bd->bi_dram[i].size, "\n");
+ 	}
+ 
++	puts("SRAM Configuration:\n");
++	printf("\t%dKB at 0x%08x\n", gd->bd->bi_sramsize >> 10, gd->bd->bi_sramstart);
++
+ 	return (0);
+ }
+ 
+@@ -191,6 +195,12 @@ init_fnc_t *init_sequence[] = {
+ 	cpu_init,		/* basic cpu dependent setup */
+ 	board_init,		/* basic board dependent setup */
+ 	interrupt_init,		/* set up exceptions */
++#ifdef CONFIG_OXNAS
++	/* Need early console to see SATA env. load messages */
++	init_baudrate,		/* initialze baudrate settings */
++	serial_init,		/* serial communications setup */
++	console_init_f,		/* stage 1 init of console */
++#endif // CONFIG_OXNAS
+ 	env_init,		/* initialize environment */
+ 	init_baudrate,		/* initialze baudrate settings */
+ 	serial_init,		/* serial communications setup */
+@@ -206,7 +216,6 @@ init_fnc_t *init_sequence[] = {
+ 
+ void start_armboot (void)
+ {
+-	DECLARE_GLOBAL_DATA_PTR;
+ 
+ 	ulong size;
+ 	init_fnc_t **init_fnc_ptr;
+@@ -232,9 +241,11 @@ void start_armboot (void)
+ 		}
+ 	}
+ 
++#ifndef CFG_NO_FLASH
+ 	/* configure available FLASH banks */
+ 	size = flash_init ();
+ 	display_flash_config (size);
++#endif // CFG_NO_FLASH
+ 
+ #ifdef CONFIG_VFD
+ #	ifndef PAGE_SIZE
+@@ -356,6 +367,12 @@ void hang (void)
+ 	for (;;);
+ }
+ 
++void raise (int n)
++{
++	puts ("### ERROR ### Please RESET the board ###\n");
++	for (;;);
++}
++
+ #ifdef CONFIG_MODEM_SUPPORT
+ /* called from main loop (common/main.c) */
+ extern void  dbg(const char *fmt, ...);
+diff --git a/net/net.c b/net/net.c
+index e2b2a78..b3b0073 100644
+--- a/net/net.c
++++ b/net/net.c
+@@ -235,6 +235,7 @@ void ArpTimeoutCheck(void)
+ 			NetArpWaitTry = 0;
+ 			NetStartAgain();
+ 		} else {
++			puts ("\nARP Resend request\n");
+ 			NetArpWaitTimerStart = t;
+ 			ArpRequest();
+ 		}
+@@ -738,7 +739,7 @@ static void PingStart(void)
+ #if defined(CONFIG_NET_MULTI)
+ 	printf ("Using %s device\n", eth_get_name());
+ #endif	/* CONFIG_NET_MULTI */
+-	NetSetTimeout (10 * CFG_HZ, PingTimeout);
++	NetSetTimeout (30 * CFG_HZ, PingTimeout);
+ 	NetSetHandler (PingHandler);
+ 
+ 	PingSend();
+@@ -1384,7 +1385,7 @@ NetReceive(volatile uchar * inpkt, int len)
+ 				 */
+ 				/* XXX point to ip packet */
+ 				(*packetHandler)((uchar *)ip, 0, 0, 0);
+-				break;
++				return;/**break; BHC Changed to remove second invocation of ping handler below */
+ #endif
+ 			default:
+ 				return;
+@@ -1492,10 +1493,11 @@ unsigned
+ NetCksum(uchar * ptr, int len)
+ {
+ 	ulong	xsum;
++	ushort *s = ptr;
+ 
+ 	xsum = 0;
+ 	while (len-- > 0)
+-		xsum += *((ushort *)ptr)++;
++		xsum += *s++;
+ 	xsum = (xsum & 0xffff) + (xsum >> 16);
+ 	xsum = (xsum & 0xffff) + (xsum >> 16);
+ 	return (xsum & 0xffff);
+diff --git a/net/tftp.c b/net/tftp.c
+index 5a5ae22..18dd39a 100644
+--- a/net/tftp.c
++++ b/net/tftp.c
+@@ -106,6 +106,7 @@ TftpSend (void)
+ 	volatile uchar *	pkt;
+ 	volatile uchar *	xp;
+ 	int			len = 0;
++	volatile ushort *	s;
+ 
+ 	/*
+ 	 *	We will always be sending some sort of packet, so
+@@ -117,7 +118,9 @@ TftpSend (void)
+ 
+ 	case STATE_RRQ:
+ 		xp = pkt;
+-		*((ushort *)pkt)++ = htons(TFTP_RRQ);
++		s = (ushort *)pkt;
++		*s++ = htons(TFTP_RRQ);
++		pkt = (uchar *)s;
+ 		strcpy ((char *)pkt, tftp_filename);
+ 		pkt += strlen(tftp_filename) + 1;
+ 		strcpy ((char *)pkt, "octet");
+@@ -135,15 +138,19 @@ TftpSend (void)
+ 	case STATE_DATA:
+ 	case STATE_OACK:
+ 		xp = pkt;
+-		*((ushort *)pkt)++ = htons(TFTP_ACK);
+-		*((ushort *)pkt)++ = htons(TftpBlock);
++		s = (ushort *)pkt;
++		*s++ = htons(TFTP_ACK);
++		*s++ = htons(TftpBlock);
++		pkt = (uchar *)s;
+ 		len = pkt - xp;
+ 		break;
+ 
+ 	case STATE_TOO_LARGE:
+ 		xp = pkt;
+-		*((ushort *)pkt)++ = htons(TFTP_ERROR);
+-		*((ushort *)pkt)++ = htons(3);
++		s = (ushort *)pkt;
++		*s++ = htons(TFTP_ERROR);
++		*s++ = htons(3);
++		pkt = (uchar *)s;
+ 		strcpy ((char *)pkt, "File too large");
+ 		pkt += 14 /*strlen("File too large")*/ + 1;
+ 		len = pkt - xp;
+@@ -151,8 +158,10 @@ TftpSend (void)
+ 
+ 	case STATE_BAD_MAGIC:
+ 		xp = pkt;
+-		*((ushort *)pkt)++ = htons(TFTP_ERROR);
+-		*((ushort *)pkt)++ = htons(2);
++		s = (ushort *)pkt;
++		*s++ = htons(TFTP_ERROR);
++		*s++ = htons(2);
++		pkt = (uchar *)s;
+ 		strcpy ((char *)pkt, "File has bad magic");
+ 		pkt += 18 /*strlen("File has bad magic")*/ + 1;
+ 		len = pkt - xp;
+@@ -167,6 +176,7 @@ static void
+ TftpHandler (uchar * pkt, unsigned dest, unsigned src, unsigned len)
+ {
+ 	ushort proto;
++	ushort *s;
+ 
+ 	if (dest != TftpOurPort) {
+ 		return;
+@@ -180,7 +190,9 @@ TftpHandler (uchar * pkt, unsigned dest, unsigned src, unsigned len)
+ 	}
+ 	len -= 2;
+ 	/* warning: don't use increment (++) in ntohs() macros!! */
+-	proto = *((ushort *)pkt)++;
++	s = (ushort *)pkt;
++	proto = *s++;
++	pkt = (uchar *)s;
+ 	switch (ntohs(proto)) {
+ 
+ 	case TFTP_RRQ:
+-- 
+1.7.1
+

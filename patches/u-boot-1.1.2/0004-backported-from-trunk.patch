@@ -1,8 +1,9 @@
-From bfd1b827a4e2e07a98c605f43be45568c58681f6 Mon Sep 17 00:00:00 2001
-From: Peter Lemenkov <lemenkov@gmail.com>
-Date: Thu, 25 Jun 2009 09:56:17 -0400
+From b189efd8bd9b96910cbca488100c4b41e1cac4b5 Mon Sep 17 00:00:00 2001
+From: Stephan Linz <linz@li-pro.net>
+Date: Mon, 15 Apr 2013 16:53:31 +0200
 Subject: [PATCH] backported from trunk
 
+Signed-off-by: Stephan Linz <linz@li-pro.net>
 ---
  Makefile |    2 +-
  1 files changed, 1 insertions(+), 1 deletions(-)

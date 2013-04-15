@@ -1,0 +1,96 @@
+From f80fab71e3fc8dac0e9c006ce9ece44ec99d368d Mon Sep 17 00:00:00 2001
+From: Stephan Linz <linz@li-pro.net>
+Date: Mon, 15 Apr 2013 17:53:02 +0200
+Subject: [PATCH] arm-oxnas: add Iomega HMNHD configuration
+
+Signed-off-by: Stephan Linz <linz@li-pro.net>
+---
+ Makefile                |   17 ++++++++++++++++-
+ include/configs/oxnas.h |   19 ++++++++++++++++---
+ 2 files changed, 32 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index fd61a56..d8a44b4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1230,6 +1230,8 @@ xtract_omap1610xxx = $(subst _cs0boot,,$(subst _cs3boot,,$(subst _cs_autoboot,,$
+ 
+ xtract_omap730p2 = $(subst _cs0boot,,$(subst _cs3boot,, $(subst _config,,$1)))
+ 
++xtract_oxnas = $(subst _iomega_hmnhd,,$(subst _config,,$1))
++
+ integratorap_config :	unconfig
+ 	@./mkconfig $(@:_config=) arm arm926ejs integratorap
+ 
+@@ -1296,8 +1298,21 @@ smdk2410_config	:	unconfig
+ SX1_config :		unconfig
+ 	@./mkconfig $(@:_config=) arm arm925t sx1
+ 
++oxnas_iomega_hmnhd_config \
+ oxnas_config :	unconfig
+-	@./mkconfig $(@:_config=) arm arm926ejs oxnas
++	@ >include/config.h
++	@[ -z "$(findstring _iomega_hmnhd,$@)" ] || \
++		{ echo "#define OXNAS_IOMEGA_HMNHD 1" >>include/config.h ; \
++		  echo "#define USE_FLASH 0" >>include/config.h ; \
++		  echo "#define LINUX_ROOT_RAIDED 0" >>include/config.h ; \
++		  echo "#define USE_LEON_TIME_COUNT 0" >>include/config.h ; \
++		  echo "... for Iomega HMNHD with 64 MB RAM, no Flash, no raided RootFS, SATA, internal UART" ; \
++		}
++	@./mkconfig -a $(call xtract_oxnas,$@) arm arm926ejs oxnas
++
++#oxnas_config :	unconfig
++#	@ >include/config.h
++#	@./mkconfig -a $(@:_config=) arm arm926ejs oxnas
+ 
+ # TRAB default configuration:	8 MB Flash, 32 MB RAM
+ trab_config \
+diff --git a/include/configs/oxnas.h b/include/configs/oxnas.h
+index 218aba5..006fd75 100644
+--- a/include/configs/oxnas.h
++++ b/include/configs/oxnas.h
+@@ -311,6 +311,14 @@
+ /**
+  * Booting
+  */
++#ifdef OXNAS_IOMEGA_HMNHD
++#define LINUX_KERNEL_SATA_BLK	"12c"
++#define LINUX_KERNEL_SATA_BLK2	"2a6e"
++#else
++#define LINUX_KERNEL_SATA_BLK	"122"
++#define LINUX_KERNEL_SATA_BLK2	"e000"
++#endif
++
+ #if (LINUX_ROOT_RAIDED == 1)
+ #define LINUX_ROOT_DEVICE "root=/dev/md1"
+ #else
+@@ -324,8 +332,8 @@
+ #define CONFIG_EXTRA_ENV_SETTINGS \
+     "select0=ide dev 0\0" \
+     "select1=ide dev 1\0" \
+-    "load=ide read 0x48500000 122 1644\0" \
+-    "load2=ide read 0x48500000 e000 1644\0" \
++    "load=ide read 0x48500000 " LINUX_KERNEL_SATA_BLK " 1644\0" \
++    "load2=ide read 0x48500000 " LINUX_KERNEL_SATA_BLK2 " 1644\0" \
+ 	"lightled=ledfail 1\0" \
+ 	"extinguishled=ledfail 0\0" \
+     "boot=bootm 48500000\0"
+@@ -392,9 +400,14 @@
+ #define CFG_ENV_SIZE			(8*1024)
+ #define ENVIRONMENT_OFFSET		((CFG_SRAM_SIZE) - (CFG_ENV_SIZE) - 1024)
+ #define CFG_ENV_ADDR			((CFG_SRAM_BASE) + (ENVIRONMENT_OFFSET))
++#ifdef OXNAS_IOMEGA_HMNHD
++#define ROM_LOADER_LOAD_START_SECTOR 1
++#define ROM_LOADER_LOAD_REDUNDANT_START_SECTOR 10608
++#else
+ #define ROM_LOADER_LOAD_START_SECTOR 34
+-#define CFG_ENV_DISK_SECTOR 	((ROM_LOADER_LOAD_START_SECTOR) + SIZE_TO_SECTORS(ENVIRONMENT_OFFSET))
+ #define ROM_LOADER_LOAD_REDUNDANT_START_SECTOR 57088
++#endif
++#define CFG_ENV_DISK_SECTOR 	((ROM_LOADER_LOAD_START_SECTOR) + SIZE_TO_SECTORS(ENVIRONMENT_OFFSET))
+ #define CFG_ENV_DISK_REDUNDANT_SECTOR ((ROM_LOADER_LOAD_REDUNDANT_START_SECTOR) + SIZE_TO_SECTORS(ENVIRONMENT_OFFSET))
+ 
+ #else
+-- 
+1.7.1
+

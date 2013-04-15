@@ -1,4 +1,4 @@
-From 37b80e4399b3dfa857c9b51866c75ce8d375bb9c Mon Sep 17 00:00:00 2001
+From 02cdcd3482b81fa3cfa287ff2d9f5deb536511fe Mon Sep 17 00:00:00 2001
 From: Stephan Linz <linz@li-pro.net>
 Date: Sat, 16 Feb 2013 20:36:54 +0100
 Subject: [PATCH] arm-oxnas: move default configuration
@@ -9,12 +9,12 @@ config.mk to boards config.h
 Signed-off-by: Stephan Linz <linz@li-pro.net>
 ---
  board/oxnas/Makefile       |    4 +-
- board/oxnas/config.mk      |   28 +++-------------
- board/oxnas/ide-810.c      |    4 ++
- board/oxnas/platform-800.S |    4 ++
- board/oxnas/platform-810.S |    4 ++
- include/configs/oxnas.h    |   78 +++++++++++++++++++++++++++++++++++++++----
- 6 files changed, 89 insertions(+), 33 deletions(-)
+ board/oxnas/config.mk      |   30 +++---------------
+ board/oxnas/ide-810.c      |    3 ++
+ board/oxnas/platform-800.S |    3 ++
+ board/oxnas/platform-810.S |    3 ++
+ include/configs/oxnas.h    |   71 ++++++++++++++++++++++++++++++++++++++++++-
+ 6 files changed, 85 insertions(+), 29 deletions(-)
  mode change 100644 => 100755 mkconfig
 
 diff --git a/board/oxnas/Makefile b/board/oxnas/Makefile
@@ -33,10 +33,10 @@ index 6f80690..0919348 100644
  $(LIB):	$(OBJS) $(SOBJS)
  	$(AR) crv $@ $^
 diff --git a/board/oxnas/config.mk b/board/oxnas/config.mk
-index b404b94..318c94d 100644
+index 841a492..318c94d 100644
 --- a/board/oxnas/config.mk
 +++ b/board/oxnas/config.mk
-@@ -1,25 +1,7 @@
+@@ -1,27 +1,7 @@
 -TEXT_BASE = 0x48d00000
 -
 -PLL400 ?= 733333333
@@ -49,26 +49,28 @@ index b404b94..318c94d 100644
 -PROBE_MEM_SIZE ?= 1
 -MEM_SIZE ?= 64	# Memory size in megabytes if probing is not enabled
 -MEM_ODT ?= 150
+-
+-USE_SATA ?= 1
+-USE_SATA_ENV ?= 1
+-USE_FLASH ?= 1
 +#
 +# OXNAS boards (OXE800/OXE810)
 +#
  
--USE_SATA ?= 1
--USE_SATA_ENV ?= 1
--USE_FLASH ?= 1
--
 -LINUX_ROOT_RAIDED ?= 1
 -
 -USE_EXTERNAL_UART ?= 0
 -INTERNAL_UART ?= 2
 -
+-USE_LEON_TIME_COUNT ?= 1 # uses leon counted time to update system time on power-up
+-
 -TEST_BRD ?= 0	# Only significant for OX800
 +TEXT_BASE = 0x48d00000
  
--PLATFORM_CPPFLAGS += -DLINUX_ROOT_RAIDED=$(LINUX_ROOT_RAIDED) -DMEM_ODT=$(MEM_ODT) -DPROBE_MEM_SIZE=$(PROBE_MEM_SIZE) -DNAS_VERSION=$(NAS_VERSION) -DFPGA=$(FPGA) -DFPGA_ARM_CLK=$(FPGA_ARM_CLK) -DINTERNAL_UART=$(INTERNAL_UART) -DUSE_EXTERNAL_UART=$(USE_EXTERNAL_UART) -DMEM_SIZE=$(MEM_SIZE) -DPLL400=$(PLL400) -DRPSCLK=$(RPSCLK) -DTEST_BRD=$(TEST_BRD) -DUSE_SATA=$(USE_SATA) -DUSE_SATA_ENV=$(USE_SATA_ENV) -DUSE_FLASH=$(USE_FLASH)
+-PLATFORM_CPPFLAGS += -DLINUX_ROOT_RAIDED=$(LINUX_ROOT_RAIDED) -DMEM_ODT=$(MEM_ODT) -DPROBE_MEM_SIZE=$(PROBE_MEM_SIZE) -DNAS_VERSION=$(NAS_VERSION) -DFPGA=$(FPGA) -DFPGA_ARM_CLK=$(FPGA_ARM_CLK) -DINTERNAL_UART=$(INTERNAL_UART) -DUSE_EXTERNAL_UART=$(USE_EXTERNAL_UART) -DMEM_SIZE=$(MEM_SIZE) -DPLL400=$(PLL400) -DRPSCLK=$(RPSCLK) -DTEST_BRD=$(TEST_BRD) -DUSE_SATA=$(USE_SATA) -DUSE_SATA_ENV=$(USE_SATA_ENV) -DUSE_FLASH=$(USE_FLASH) -DUSE_LEON_TIME_COUNT=$(USE_LEON_TIME_COUNT)
 +PLATFORM_CPPFLAGS += -DTEXT_BASE=$(TEXT_BASE)
 diff --git a/board/oxnas/ide-810.c b/board/oxnas/ide-810.c
-index 03d5a0c..ca3b225 100644
+index 8bcb9e1..d64b021 100644
 --- a/board/oxnas/ide-810.c
 +++ b/board/oxnas/ide-810.c
 @@ -22,6 +22,8 @@
@@ -80,14 +82,13 @@ index 03d5a0c..ca3b225 100644
  #define SATA_DMA_CHANNEL 0
  
  #define DMA_CTRL_STATUS      (0x0)
-@@ -889,3 +891,5 @@ int ide_preinit(void)
- 
+@@ -890,3 +892,4 @@ int ide_preinit(void)
      return !num_disks_found;
  }
-+
+ 
 +#endif /* (NAS_VERSION == 810) */
 diff --git a/board/oxnas/platform-800.S b/board/oxnas/platform-800.S
-index 8fde117..e5ee37f 100644
+index 96658cb..2fdf2bd 100644
 --- a/board/oxnas/platform-800.S
 +++ b/board/oxnas/platform-800.S
 @@ -26,6 +26,8 @@
@@ -97,16 +98,15 @@ index 8fde117..e5ee37f 100644
 +#if (NAS_VERSION == 800)
 +
  /* use estimate of processor speed to calculate number of cycles delay */
- /* delay count is nominal (PLL200 frequency x delay time) / loop count
+ /* delay count is nominal (PLL200 frequency x delay time) / loop count 
   * expressing 200us as 200/1000000 and re-arranging gives the expression below
-@@ -251,3 +253,5 @@ init_table:
- 	.word 0x4580002C, 0x00000000	// Do NOT disable HPROT, ie want write coherency
+@@ -252,3 +254,4 @@ init_table:
  
  .ltorg
-+
+ 
 +#endif /* (NAS_VERSION == 800) */
 diff --git a/board/oxnas/platform-810.S b/board/oxnas/platform-810.S
-index f621f72..b9275d4 100644
+index 74b69fd..0bb40f2 100644
 --- a/board/oxnas/platform-810.S
 +++ b/board/oxnas/platform-810.S
 @@ -26,6 +26,8 @@
@@ -116,19 +116,18 @@ index f621f72..b9275d4 100644
 +#if (NAS_VERSION == 810)
 +
  /* use estimate of processor speed to calculate number of cycles delay */
- /* delay count is nominal (PLL200 frequency x delay time) / loop count
+ /* delay count is nominal (PLL200 frequency x delay time) / loop count 
   * expressing 200us as 200/1000000 and re-arranging gives the expression below
-@@ -474,3 +476,5 @@ probe_table:
-     .word 0x50000040, 0xabcdef01
+@@ -475,3 +477,4 @@ probe_table:
  
  .ltorg
-+
+ 
 +#endif /* (NAS_VERSION == 810) */
 diff --git a/include/configs/oxnas.h b/include/configs/oxnas.h
-index a8ff3cf..966e13f 100644
+index af938b9..218aba5 100644
 --- a/include/configs/oxnas.h
 +++ b/include/configs/oxnas.h
-@@ -29,7 +29,68 @@
+@@ -29,7 +29,72 @@
  #define writeb(v, p) (*(volatile u8 *)(p)= (v))
  #define writel(v, p) (*(volatile u32*)(p)=(v))
  
@@ -192,55 +191,27 @@ index a8ff3cf..966e13f 100644
 +#define	INTERNAL_UART	2 /* use internal UART2 as console */
 +#endif
 +
++#ifndef	USE_LEON_TIME_COUNT
++#define	USE_LEON_TIME_COUNT 1 /* uses leon counted time to update system time on power-up */
++#endif
++
 +#ifndef	TEST_BRD
 +#define	TEST_BRD	0 /* Only significant for OX800 */
 +#endif
  
  /**
   * Architecture
-@@ -219,7 +280,6 @@
-  * Monitor commands
-  */
- #define BASE_COMMANDS (CFG_CMD_IMI    | \
--                       CFG_CMD_IMLS   | \
-                        CFG_CMD_BDI    | \
-                        CFG_CMD_NET    | \
-                        CFG_CMD_PING   | \
-@@ -230,7 +290,7 @@
- #ifdef CFG_NO_FLASH
- #define FLASH_COMMANDS (BASE_COMMANDS)
- #else
--#define FLASH_COMMANDS (BASE_COMMANDS | CFG_CMD_FLASH)
-+#define FLASH_COMMANDS (BASE_COMMANDS | CFG_CMD_FLASH | CFG_CMD_IMLS)
- #endif // CFG_NO_FLASH
+@@ -289,7 +354,9 @@
  
- #ifdef CONFIG_OXNAS_USE_SATA
-@@ -293,10 +353,10 @@
- #define CFG_FLASH_CFI			1
+ #define FORCE_TOP_BOOT_FLASH	1
+ 
+-#define CFG_FLASH_CFI			1
++#define CFG_FLASH_EMPTY_INFO	1
++
++#define CFG_FLASH_CFI		1
  #define CFG_FLASH_CFI_DRIVER	1
  
--#define NUM_FLASH_MAIN_BLOCKS   63          /* For Intel 28F320B3T */
--#define NUM_FLASH_PARAM_BLOCKS  8           /* For Intel 28F320B3T */
--#define FLASH_MAIN_BLOCK_SIZE   (64*1024)   /* For Intel 28F320B3T family */
--#define FLASH_PARAM_BLOCK_SIZE  (8*1024)    /* For Intel 28F320B3T family */
-+#define NUM_FLASH_MAIN_BLOCKS   63		/* For Intel 28F320B3T */
-+#define NUM_FLASH_PARAM_BLOCKS  8		/* For Intel 28F320B3T */
-+#define FLASH_MAIN_BLOCK_SIZE   (64*1024)	/* For Intel 28F320B3T family */
-+#define FLASH_PARAM_BLOCK_SIZE  (8*1024)	/* For Intel 28F320B3T family */
- 
- /* Assuming counts main blocks and parameter blocks, as the Intel/AMD detection */
- /* I'm intending to copy would seem to indicate */
-@@ -311,7 +371,9 @@
- #define CFG_FLASH_WRITE_TOUT    (20*CFG_HZ)	/* Timeout for Flash Write */
- #define CFG_FLASH_WRITE_ATTEMPTS 5
- 
--#define STATIC_BUS_FLASH_CONFIG 0x4f1f3f3f  /* Slow ASIC settings */
-+#define STATIC_BUS_FLASH_CONFIG 0x4f1f3f3f	/* Slow ASIC settings */
-+
-+#define CFG_FLASH_EMPTY_INFO		/* print 'E' for empty sector on flinfo */
- 
- #endif // !CFG_NO_FLASH
- 
+ #define NUM_FLASH_MAIN_BLOCKS   63          /* For Intel 28F320B3T */
 diff --git a/mkconfig b/mkconfig
 old mode 100644
 new mode 100755
