@@ -1,5 +1,7 @@
 2013-04-15	Stephan Linz <linz@li-pro.net>
 
+	* platform: renew patches to linux-2.6.24.7 based on Oxford
+	  Semicondutors SDK 1.2.3-1117 RC1 (14th Nov 2008)
 	* platform: renew patches to u-boot-1.1.2 based on Oxford
 	  Semicondutors SDK 1.2.3-1117 RC1 (14th Nov 2008)
 

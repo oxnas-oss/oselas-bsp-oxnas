@@ -6,10 +6,6 @@ patch-2.6.24.3-4.bz2
 patch-2.6.24.4-5.bz2
 patch-2.6.24.5-6.bz2
 patch-2.6.24.6-7.bz2
-oe-rid/0001-OE-oxnas-oxnas-rid-2.6.24.4.diff.patch
-oe-rid/0002-OE-oxnas-oxnas-pci-config-delay.patch.patch
-oe-rid/0003-OE-oxnas-oxnas-pci-max-size.patch.patch
-oe-rid/0004-OE-oxnas-oxnas-uart.patch.patch
-oe-rid/0005-OE-squashfs-squashfs-lzma-2.6.24.patch.patch
+oxsemi/0001-arm-oxnas-Add-new-arch-by-Oxford-Semiconductor-Ltd.patch
 oe-rid/0006-OE-ubifs-ubifs-v2.6.24.patch.patch
 oe-rid/0007-OE-ubifs-ubifs-v2.6.24-silent-get-sb.patch.patch
